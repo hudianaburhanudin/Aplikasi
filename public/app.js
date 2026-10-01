@@ -2,13 +2,15 @@
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const rp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 let me = null;
+let scope = 'all'; // lembaga aktif: id atau 'all'
+const multi = () => me.lembagas.length > 1 && scope === 'all';
 
 async function api(path, opt = {}) {
   const r = await fetch('/api/' + path, {
-    method: opt.method || 'GET', headers: opt.body ? { 'Content-Type': 'application/json' } : {},
+    method: opt.method || 'GET', headers: { ...(opt.body ? { 'Content-Type': 'application/json' } : {}), 'X-Lembaga': String(scope) },
     body: opt.body ? JSON.stringify(opt.body) : undefined,
   });
   const data = await r.json().catch(() => ({}));
@@ -20,7 +22,7 @@ const qs = (o) => new URLSearchParams(Object.fromEntries(Object.entries(o).filte
 
 async function download(path) {
   try {
-    const r = await fetch('/api/' + path);
+    const r = await fetch('/api/' + path, { headers: { 'X-Lembaga': String(scope) } });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Gagal mengekspor');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(await r.blob());
@@ -39,12 +41,14 @@ const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toas
 function openForm(title, fields, values, onSave) {
   const f = $('#dlgForm');
   f.innerHTML = `<h3>${esc(title)}</h3><div class="fields">${fields.map((x) => {
-    const v = values[x.name] ?? x.default ?? '';
+    const v = values[x.name] ?? x.default ?? x.options?.find((o) => o.active)?.value ?? '';
     let input;
+    if (x.type === 'checks') return `<fieldset class="full checks"><legend>${esc(x.label)}</legend>${x.options.map((o) =>
+      `<label><input type="checkbox" name="${x.name}" value="${esc(o.value)}" ${(values[x.name] || []).includes(o.value) ? 'checked' : ''}> ${esc(o.label)}</label>`).join('')}</fieldset>`;
     if (x.options) input = `<select name="${x.name}">${x.blank === false ? '' : '<option value=""></option>'}${x.options.map((o) =>
       `<option value="${esc(o.value)}" ${String(o.value) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
     else if (x.type === 'textarea') input = `<textarea name="${x.name}" rows="2">${esc(v)}</textarea>`;
-    else input = `<input name="${x.name}" type="${x.type || 'text'}" value="${esc(v)}" ${x.step ? `step="${x.step}"` : ''}>`;
+    else input = `<input name="${x.name}" type="${x.type || 'text'}" value="${esc(v)}" ${x.step ? `step="${x.step}"` : ''} ${x.disabled ? 'disabled' : ''}>`;
     return `<label class="${x.full ? 'full' : ''}">${esc(x.label)}${x.required ? ' *' : ''}${input}</label>`;
   }).join('')}</div><p class="error" id="formErr"></p>
   <div class="actions"><button type="button" class="btn" id="cancelBtn">Batal</button><button class="btn primary" value="ok">Simpan</button></div>`;
@@ -53,6 +57,7 @@ function openForm(title, fields, values, onSave) {
   f.onsubmit = async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(f));
+    fields.filter((x) => x.type === 'checks').forEach((x) => { data[x.name] = [...f.querySelectorAll(`input[name=${x.name}]:checked`)].map((i) => Number(i.value)); });
     try { await onSave(data); dlg.close(); } catch (err) { $('#formErr').textContent = err.message; }
   };
   dlg.showModal();
@@ -62,6 +67,7 @@ function openForm(title, fields, values, onSave) {
 const optKelas = async () => (await api('kelas')).map((k) => ({ value: k.id, label: k.nama }));
 const optGuru = async () => (await api('guru')).map((g) => ({ value: g.id, label: g.nama }));
 const optSiswa = async () => (await api('siswa?status=aktif')).map((s) => ({ value: s.id, label: `${s.nis || '-'} · ${s.nama}` }));
+const optTahun = async () => (await api('tahun_ajaran')).map((t) => ({ value: t.nama, label: t.nama + (t.aktif ? ' (aktif)' : ''), active: !!t.aktif }));
 const JK = [{ value: 'L', label: 'Laki-laki' }, { value: 'P', label: 'Perempuan' }];
 
 // ---- halaman CRUD generik ----
@@ -78,8 +84,9 @@ function crudPage(cfg) {
       const params = { q: $('#q').value };
       main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
       const rows = await api(cfg.key + '?' + qs(params));
-      $('#tbl').innerHTML = rows.length ? `<table><thead><tr>${cfg.columns.map((c) => `<th>${c.label}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map((r) =>
-        `<tr>${cfg.columns.map((c) => `<td>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}
+      const columns = multi() && cfg.scoped !== false ? [{ key: 'lembaga_kode', label: 'Lembaga' }, ...cfg.columns] : cfg.columns;
+      $('#tbl').innerHTML = rows.length ? `<table><thead><tr>${columns.map((c) => `<th>${c.label}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map((r) =>
+        `<tr>${columns.map((c) => `<td>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}
         <td class="act">${(cfg.rowActions || []).map((a) => `<button class="btn small" data-a="${a.name}" data-id="${r.id}">${a.label}</button>`).join(' ')}
         <button class="btn small" data-a="edit" data-id="${r.id}">Ubah</button>
         <button class="btn small danger" data-a="del" data-id="${r.id}">Hapus</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada data.</div>';
@@ -146,7 +153,7 @@ pages.kelas = crudPage({
   key: 'kelas', title: 'Data Kelas', single: 'Kelas',
   columns: [{ key: 'nama', label: 'Kelas' }, { key: 'tahun_ajaran', label: 'Tahun ajaran' },
     { key: 'wali_nama', label: 'Wali kelas' }, { key: 'jumlah', label: 'Jml siswa' }],
-  fields: [{ name: 'nama', label: 'Nama kelas', required: true }, { name: 'tahun_ajaran', label: 'Tahun ajaran', default: '2026/2027' },
+  fields: [{ name: 'nama', label: 'Nama kelas', required: true }, { name: 'tahun_ajaran', label: 'Tahun ajaran', load: optTahun, blank: false },
     { name: 'wali_guru_id', label: 'Wali kelas', load: optGuru, full: true }],
 });
 pages.nilai = crudPage({
@@ -176,16 +183,32 @@ pages.pembayaran = crudPage({
     { name: 'keterangan', label: 'Keterangan', full: true }],
 });
 
+pages.lembaga = crudPage({
+  key: 'lembaga', title: 'Lembaga', single: 'Lembaga', scoped: false,
+  columns: [{ key: 'kode', label: 'Kode' }, { key: 'nama', label: 'Nama' }, { key: 'jenjang', label: 'Jenjang' }, { key: 'telepon', label: 'Telepon' }],
+  fields: [{ name: 'kode', label: 'Kode singkat', required: true }, { name: 'nama', label: 'Nama lembaga', required: true },
+    { name: 'jenjang', label: 'Jenjang' }, { name: 'telepon', label: 'Telepon' }, { name: 'alamat', label: 'Alamat', type: 'textarea', full: true }],
+});
+pages.tahun = crudPage({
+  key: 'tahun_ajaran', title: 'Tahun Ajaran', single: 'Tahun Ajaran', scoped: false,
+  columns: [{ key: 'nama', label: 'Tahun ajaran' }, { key: 'mulai', label: 'Mulai' }, { key: 'selesai', label: 'Selesai' },
+    { label: 'Status', render: (r) => r.aktif ? '<span class="badge">aktif</span>' : '' }],
+  fields: [{ name: 'nama', label: 'Nama (mis. 2026/2027)', required: true, full: true }, { name: 'mulai', label: 'Mulai', type: 'date' }, { name: 'selesai', label: 'Selesai', type: 'date' },
+    { name: 'aktif', label: 'Tahun ajaran aktif', blank: false, default: 0, options: [{ value: 0, label: 'Tidak' }, { value: 1, label: 'Ya (menonaktifkan yang lain)' }] }],
+});
+
 // ---- dashboard ----
 pages.dashboard = guard(async () => {
   const d = await api('dashboard');
-  const a = d.absensi_hari_ini, max = Math.max(1, ...d.per_kelas.map((k) => k.jumlah));
+  const a = d.absensi_hari_ini;
+  const bars = (rows, label) => { const max = Math.max(1, ...rows.map((r) => r.jumlah)); return rows.map((r) =>
+    `<div><span>${esc(label(r))}</span><i style="width:${r.jumlah / max * 100}%"></i><span>${r.jumlah}</span></div>`).join('') || '<p class="empty">Belum ada data.</p>'; };
   $('#main').innerHTML = `<h2>Dashboard</h2><div class="stats">
     ${[['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)]]
       .map(([l, n]) => `<div class="card stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('')}</div>
     <div class="grid2"><div class="card"><b>Absensi hari ini</b><p>Hadir ${a.H || 0} · Sakit ${a.S || 0} · Izin ${a.I || 0} · Alpa ${a.A || 0}</p></div>
-    <div class="card"><b>Siswa per kelas</b><div class="bars">${d.per_kelas.map((k) =>
-      `<div><span>${esc(k.nama)}</span><i style="width:${k.jumlah / max * 100}%"></i><span>${k.jumlah}</span></div>`).join('') || '<p class="empty">Belum ada kelas.</p>'}</div></div></div>`;
+    ${d.multi ? `<div class="card"><b>Siswa per lembaga</b><div class="bars">${bars(d.per_lembaga, (r) => r.kode)}</div></div>` : ''}
+    <div class="card"><b>Siswa per kelas</b><div class="bars">${bars(d.per_kelas, (k) => (d.multi ? k.lembaga_kode + ' ' : '') + k.nama)}</div></div></div>`;
 });
 
 // ---- absensi ----
@@ -249,27 +272,43 @@ pages.rapor = guard(async () => {
 
 // ---- pengguna ----
 pages.pengguna = guard(async () => {
+  const lembagaOpts = me.lembagas.map((l) => ({ value: l.id, label: l.nama }));
+  const kode = (ids) => ids.map((i) => (me.lembagas.find((l) => l.id === i) || {}).kode).filter(Boolean).join(', ');
+  const roles = me.role === 'yayasan' ? [['yayasan', 'Admin Yayasan (semua lembaga)'], ['admin', 'Admin Lembaga'], ['staf', 'Staf']] : [['staf', 'Staf']];
   const load = guard(async () => {
     const rows = await api('users');
     $('#main').innerHTML = `<h2>Pengguna</h2><div class="bar"><span class="grow"></span><button class="btn primary" id="add">+ Tambah</button></div>
-      <div class="tablewrap"><table><thead><tr><th>Username</th><th>Nama</th><th>Role</th><th></th></tr></thead><tbody>${rows.map((u) =>
-        `<tr><td>${esc(u.username)}</td><td>${esc(u.nama)}</td><td><span class="badge">${esc(u.role)}</span></td>
-        <td class="act">${u.id === me.id ? '' : `<button class="btn small danger" data-id="${u.id}">Hapus</button>`}</td></tr>`).join('')}</tbody></table></div>`;
-    $('#add').onclick = () => openForm('Tambah Pengguna', [{ name: 'username', label: 'Username', required: true }, { name: 'nama', label: 'Nama', required: true },
-      { name: 'password', label: 'Password (min. 6)', type: 'password', required: true },
-      { name: 'role', label: 'Role', blank: false, options: [{ value: 'staf', label: 'Staf' }, { value: 'admin', label: 'Admin' }] }], {},
-    async (d) => { await api('users', { method: 'POST', body: d }); toast('Pengguna ditambahkan'); load(); });
+      <div class="tablewrap"><table><thead><tr><th>Username</th><th>Nama</th><th>Peran</th><th>Lembaga</th><th></th></tr></thead><tbody>${rows.map((u) =>
+        `<tr><td>${esc(u.username)}</td><td>${esc(u.nama)}</td><td><span class="badge">${esc(u.role)}</span></td><td>${u.role === 'yayasan' ? 'Semua' : esc(kode(u.lembaga_ids))}</td>
+        <td class="act">${me.role !== 'yayasan' && u.role !== 'staf' ? '' : `<button class="btn small" data-a="edit" data-id="${u.id}">Ubah</button>
+        ${u.id === me.id ? '' : `<button class="btn small danger" data-a="del" data-id="${u.id}">Hapus</button>`}`}</td></tr>`).join('')}</tbody></table></div>
+      <p class="empty" style="text-align:left">Kosongkan password saat mengubah jika tidak ingin menggantinya.</p>`;
+    const fields = (edit) => [{ name: 'username', label: 'Username', required: true, ...(edit ? { disabled: true } : {}) }, { name: 'nama', label: 'Nama', required: true },
+      { name: 'password', label: edit ? 'Password baru (opsional)' : 'Password (min. 6)', type: 'password', required: !edit },
+      { name: 'role', label: 'Peran', blank: false, options: roles.map(([value, label]) => ({ value, label })) },
+      { name: 'lembaga_ids', label: 'Lembaga yang boleh diakses (tidak berlaku untuk Admin Yayasan)', type: 'checks', options: lembagaOpts }];
+    const save = (row) => async (d) => {
+      if (row && !d.password) delete d.password;
+      if (row) delete d.username;
+      await api(row ? 'users/' + row.id : 'users', { method: row ? 'PUT' : 'POST', body: d }); toast('Tersimpan'); load();
+    };
+    $('#add').onclick = () => openForm('Tambah Pengguna', fields(false), { role: roles[roles.length - 1][0] }, save());
     $('#main').onclick = guard(async (e) => {
-      const b = e.target.closest('button[data-id]'); if (!b || !confirm('Hapus pengguna ini?')) return;
-      await api('users/' + b.dataset.id, { method: 'DELETE' }); load();
+      const b = e.target.closest('button[data-id]'); if (!b) return;
+      const row = rows.find((u) => u.id === Number(b.dataset.id));
+      if (b.dataset.a === 'edit') return openForm('Ubah Pengguna', fields(true), row, save(row));
+      if (!confirm('Hapus pengguna ini?')) return;
+      await api('users/' + row.id, { method: 'DELETE' }); load();
     });
   });
   load();
 });
 
 // ---- shell ----
-const MENU = [['dashboard', 'Dashboard'], ['siswa', 'Siswa'], ['guru', 'Guru'], ['kelas', 'Kelas'], ['absensi', 'Absensi'],
-  ['nilai', 'Nilai'], ['rapor', 'Rapor'], ['pembayaran', 'Pembayaran'], ['pengguna', 'Pengguna', true]];
+const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'];
+const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', ALL],
+  ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['pengguna', 'Pengguna', ADM],
+  ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']]];
 
 function route() {
   const name = location.hash.slice(2) || 'dashboard';
@@ -280,13 +319,28 @@ function route() {
 function showLogin() { me = null; $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
 function showApp() {
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
-  $('#nav').innerHTML = MENU.filter((m) => !m[2] || me.role === 'admin').map(([k, l]) => `<a href="#/${k}" data-p="${k}">${l}</a>`).join('');
-  $('#who').textContent = `${me.nama} (${me.role})`; route();
+  $('#nav').innerHTML = MENU.filter((m) => m[2].includes(me.role)).map(([k, l]) => `<a href="#/${k}" data-p="${k}">${l}</a>`).join('');
+  $('#who').textContent = `${me.nama} (${me.role})`;
+  let saved = null; try { saved = localStorage.getItem('lembaga'); } catch {}
+  scope = me.lembagas.some((l) => String(l.id) === saved) ? Number(saved) : (me.lembagas.length === 1 ? me.lembagas[0].id : 'all');
+  const sw = $('#lembaga');
+  if (me.lembagas.length > 1) {
+    sw.classList.remove('hidden');
+    sw.innerHTML = '<option value="all">Semua lembaga</option>' + me.lembagas.map((l) => `<option value="${l.id}">${esc(l.nama)}</option>`).join('');
+    sw.value = String(scope);
+  } else sw.classList.add('hidden');
+  $('#lembagaName').textContent = me.lembagas.length === 1 ? me.lembagas[0].nama : '';
+  route();
 }
 $('#loginForm').onsubmit = async (e) => {
   e.preventDefault(); $('#loginError').textContent = '';
   try { me = await api('login', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); e.target.reset(); showApp(); }
   catch (err) { $('#loginError').textContent = err.message; }
+};
+$('#lembaga').onchange = (e) => {
+  scope = e.target.value === 'all' ? 'all' : Number(e.target.value);
+  try { localStorage.setItem('lembaga', String(scope)); } catch {}
+  route();
 };
 $('#logoutBtn').onclick = async () => { await api('logout', { method: 'POST' }).catch(() => {}); showLogin(); };
 $('#pwBtn').onclick = () => openForm('Ganti Password', [{ name: 'lama', label: 'Password lama', type: 'password', required: true, full: true },

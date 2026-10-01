@@ -119,7 +119,7 @@ function tablePdf({ title, subtitle, headers, rows, footer }) {
   }
   pdf.pages.forEach((ops, i) => {
     pdf.ops = ops;
-    pdf.text(M, pdf.h - M + 4, 'Administrasi Sekolah', 8, { gray: 0.5 });
+    pdf.text(M, pdf.h - M + 4, 'Yayasan Miftahul Ulumillah', 8, { gray: 0.5 });
     pdf.text(M, pdf.h - M + 4, `Halaman ${i + 1}/${pdf.pages.length}`, 8, { gray: 0.5, align: 'right', w: avail });
   });
   return pdf.build();
@@ -128,8 +128,10 @@ function tablePdf({ title, subtitle, headers, rows, footer }) {
 // Rapor satu siswa (A4 portrait)
 function raporPdf({ siswa, semester, nilai, absensi }) {
   const M = 50, pdf = new Pdf(595, 842), W = pdf.w - 2 * M;
-  pdf.text(M, 70, 'LAPORAN HASIL BELAJAR', 16, { bold: true, align: 'center', w: W });
-  pdf.text(M, 88, semester ? `Semester ${semester}` : 'Semua semester', 10, { gray: 0.4, align: 'center', w: W });
+  pdf.text(M, 40, 'YAYASAN MIFTAHUL ULUMILLAH', 9, { gray: 0.4, align: 'center', w: W });
+  pdf.text(M, 56, (siswa.lembaga_nama || '').toUpperCase(), 13, { bold: true, align: 'center', w: W });
+  pdf.text(M, 76, 'LAPORAN HASIL BELAJAR', 14, { bold: true, align: 'center', w: W });
+  pdf.text(M, 91, semester ? `Semester ${semester}` : 'Semua semester', 10, { gray: 0.4, align: 'center', w: W });
   pdf.line(M, 100, M + W, 100, 0, 1);
   let y = 125;
   for (const [k, v] of [['Nama', siswa.nama], ['NIS', siswa.nis], ['Kelas', siswa.kelas_nama], ['Wali kelas', siswa.wali_kelas]]) {
@@ -166,9 +168,10 @@ function kuitansiPdf(p, rp) {
   const M = 36, pdf = new Pdf(595, 330), W = pdf.w - 2 * M;
   pdf.line(M, M, M + W, M, 0, 1.5);
   pdf.text(M, M + 26, 'KUITANSI PEMBAYARAN', 16, { bold: true });
+  pdf.text(M, M + 52, `${p.lembaga_nama || ''} - Yayasan Miftahul Ulumillah`, 9, { gray: 0.4 });
   pdf.text(M, M + 26, `No. ${String(p.id).padStart(6, '0')}`, 10, { align: 'right', w: W });
   pdf.line(M, M + 38, M + W, M + 38, 0, 0.5);
-  let y = M + 66;
+  let y = M + 74;
   const rows = [['Telah terima dari', `${p.siswa_nama}${p.nis ? ' (NIS ' + p.nis + ')' : ''}`], ['Kelas', p.kelas_nama || '-'],
     ['Untuk pembayaran', p.jenis + (p.bulan ? ' - ' + p.bulan : '')], ['Keterangan', p.keterangan || '-'], ['Tanggal', p.tanggal]];
   for (const [k, v] of rows) { pdf.text(M, y, k, 10, { gray: 0.4 }); pdf.text(M + 120, y, ': ' + v, 10); y += 18; }

@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Administrasi Sekolah</title>
+<title>Yayasan Miftahul Ulumillah</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="login" class="login hidden">
   <form id="loginForm" class="card">
-    <h1>🏫 Administrasi Sekolah</h1>
+    <h1>🏫 Yayasan Miftahul Ulumillah</h1>
     <label>Username <input name="username" autocomplete="username" required autofocus></label>
     <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
     <p class="error" id="loginError"></p>
@@ -18,7 +18,8 @@
 </div>
 <div id="app" class="app hidden">
   <aside class="sidebar">
-    <div class="brand">🏫 Sekolah</div>
+    <div class="brand">🏫 Miftahul Ulum</div>
+    <select id="lembaga" class="hidden"></select><div id="lembagaName" class="lname"></div>
     <nav id="nav"></nav>
     <div class="who"><span id="who"></span>
       <button class="btn small" id="pwBtn">Ganti password</button>

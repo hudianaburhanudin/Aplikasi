@@ -48,3 +48,9 @@ dialog form{padding:20px;display:grid;gap:12px}dialog h3{margin:0}
 .rapor h3{text-align:center;margin:0 0 4px}.rapor dl{display:grid;grid-template-columns:130px 1fr;gap:2px 8px;margin:12px 0}.rapor dt{color:var(--mut)}.rapor dd{margin:0}
 @media(max-width:760px){.app{grid-template-columns:1fr}.sidebar{position:static;height:auto}#nav{grid-auto-flow:column;overflow:auto}.fields{grid-template-columns:1fr}}
 @media print{.sidebar,.bar,.noprint{display:none!important}.app{display:block}main{padding:0}.rapor{border:0;max-width:none}}
+
+.sidebar select{background:#ffffff14;color:#fff;border-color:#ffffff30}.sidebar select option{color:#000}
+.lname{font-size:12px;padding:0 8px;color:#aab4d0}
+fieldset.checks{border:1px solid var(--bd);border-radius:6px;display:grid;gap:4px;padding:8px 10px}
+fieldset.checks legend{font-size:12px;color:var(--mut);padding:0 4px}
+fieldset.checks label{display:flex;gap:8px;align-items:center;color:var(--ink);font-size:13px}fieldset.checks input{width:auto}
