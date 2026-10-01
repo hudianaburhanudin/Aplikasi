@@ -18,13 +18,13 @@ async function api(path, opt = {}) {
 }
 const qs = (o) => new URLSearchParams(Object.fromEntries(Object.entries(o).filter(([, v]) => v))).toString();
 
-async function downloadXlsx(path) {
+async function download(path) {
   try {
-    const r = await fetch('/api/export/' + path);
+    const r = await fetch('/api/' + path);
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Gagal mengekspor');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(await r.blob());
-    a.download = /filename="(.+?)"/.exec(r.headers.get('content-disposition') || '')?.[1] || 'data.xlsx';
+    a.download = /filename="(.+?)"/.exec(r.headers.get('content-disposition') || '')?.[1] || 'unduhan';
     a.click(); URL.revokeObjectURL(a.href);
   } catch (e) { toast(e.message, true); }
 }
@@ -72,7 +72,7 @@ function crudPage(cfg) {
     main.innerHTML = `<h2>${cfg.title}</h2><div class="bar">
       <input id="q" placeholder="Cari…" type="search">
       ${filters.map((f) => `<select data-f="${f.key}"><option value="">${f.label}</option>${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select>`).join('')}
-      <span class="grow"></span><button class="btn" id="xls">⬇ Excel</button><button class="btn primary" id="add">+ Tambah</button></div>
+      <span class="grow"></span><button class="btn" id="xls">⬇ Excel</button><button class="btn" id="pdf">⬇ PDF</button><button class="btn primary" id="add">+ Tambah</button></div>
       <div class="tablewrap" id="tbl"></div><p id="foot" class="empty" style="text-align:left"></p>`;
     const load = guard(async () => {
       const params = { q: $('#q').value };
@@ -106,7 +106,12 @@ function crudPage(cfg) {
     $('#xls').onclick = () => {
       const params = { q: $('#q').value };
       main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
-      downloadXlsx(cfg.key + '?' + qs(params));
+      download('export/' + cfg.key + '?' + qs(params));
+    };
+    $('#pdf').onclick = () => {
+      const params = { q: $('#q').value };
+      main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
+      download('pdf/' + cfg.key + '?' + qs(params));
     };
     $('#q').oninput = (() => { let t; return () => { clearTimeout(t); t = setTimeout(load, 250); }; })();
     main.querySelectorAll('[data-f]').forEach((s) => { s.onchange = load; });
@@ -162,6 +167,7 @@ pages.pembayaran = crudPage({
   filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }],
   columns: [{ key: 'tanggal', label: 'Tanggal' }, { key: 'siswa_nama', label: 'Siswa' }, { key: 'kelas_nama', label: 'Kelas' },
     { key: 'jenis', label: 'Jenis' }, { key: 'bulan', label: 'Periode' }, { label: 'Jumlah', render: (r) => rp(r.jumlah) }],
+  rowActions: [{ name: 'kuitansi', label: 'Kuitansi', run: (r) => download('pdf/kuitansi?id=' + r.id) }],
   footer: (rows) => `${rows.length} transaksi · total ${rp(rows.reduce((a, r) => a + r.jumlah, 0))}`,
   fields: [{ name: 'siswa_id', label: 'Siswa', load: optSiswa, required: true, full: true },
     { name: 'jenis', label: 'Jenis', blank: false, default: 'SPP', options: ['SPP', 'Uang Gedung', 'Seragam', 'Kegiatan', 'Lainnya'].map((v) => ({ value: v, label: v })) },
@@ -190,7 +196,7 @@ pages.absensi = guard(async () => {
     <input type="date" id="t" value="${today()}"><button class="btn" id="allH">Semua hadir</button>
     <span class="grow"></span><button class="btn primary" id="save">Simpan absensi</button></div>
     <div class="tablewrap" id="tbl"></div>
-    <h2 style="margin-top:24px">Rekap bulanan</h2><div class="bar"><input type="month" id="bln" value="${today().slice(0, 7)}"><button class="btn" id="xlsRekap">⬇ Excel</button></div>
+    <h2 style="margin-top:24px">Rekap bulanan</h2><div class="bar"><input type="month" id="bln" value="${today().slice(0, 7)}"><button class="btn" id="xlsRekap">⬇ Excel</button><button class="btn" id="pdfRekap">⬇ PDF</button></div>
     <div class="tablewrap" id="rekap"></div>`;
   const load = guard(async () => {
     if (!$('#k').value) { $('#tbl').innerHTML = '<div class="empty">Buat kelas terlebih dahulu.</div>'; return; }
@@ -207,7 +213,9 @@ pages.absensi = guard(async () => {
       `<tr><td>${esc(r.nama)}</td><td>${r.h || 0}</td><td>${r.s || 0}</td><td>${r.i || 0}</td><td>${r.a || 0}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Tidak ada data.</div>';
   });
   $('#k').onchange = $('#t').onchange = load; $('#bln').onchange = rekap;
-  $('#xlsRekap').onclick = () => downloadXlsx('rekap-absensi?' + qs({ kelas_id: $('#k').value, bulan: $('#bln').value }));
+  const rekapQ = () => '?' + qs({ kelas_id: $('#k').value, bulan: $('#bln').value });
+  $('#xlsRekap').onclick = () => download('export/rekap-absensi' + rekapQ());
+  $('#pdfRekap').onclick = () => download('pdf/rekap-absensi' + rekapQ());
   $('#allH').onclick = () => document.querySelectorAll('input[value="H"]').forEach((i) => { i.checked = true; });
   $('#save').onclick = guard(async () => {
     const items = [...document.querySelectorAll('#tbl input:checked')].map((i) => ({ siswa_id: Number(i.name.slice(1)), status: i.value }));
@@ -223,7 +231,7 @@ pages.rapor = guard(async () => {
   $('#main').innerHTML = `<h2>Rapor Siswa</h2><div class="bar">
     <select id="s">${siswa.map((s) => `<option value="${s.value}">${esc(s.label)}</option>`).join('')}</select>
     <select id="sem"><option value="">Semua semester</option><option>Ganjil</option><option>Genap</option></select>
-    <button class="btn" onclick="window.print()">🖨 Cetak</button></div><div id="out"></div>`;
+    <button class="btn" id="raporPdf">⬇ PDF</button><button class="btn" onclick="window.print()">🖨 Cetak</button></div><div id="out"></div>`;
   const load = guard(async () => {
     if (!$('#s').value) { $('#out').innerHTML = '<div class="empty">Belum ada siswa.</div>'; return; }
     const d = await api('rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
@@ -235,6 +243,7 @@ pages.rapor = guard(async () => {
       <tr><th colspan="2">Rata-rata keseluruhan</th><th>${avg}</th></tr></tbody></table>
       <p>Kehadiran: Hadir ${a.h || 0} · Sakit ${a.s || 0} · Izin ${a.i || 0} · Alpa ${a.a || 0}</p></div>`;
   });
+  $('#raporPdf').onclick = () => $('#s').value && download('pdf/rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
   $('#s').onchange = $('#sem').onchange = load; load();
 });
 

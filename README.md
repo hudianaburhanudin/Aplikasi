@@ -10,6 +10,7 @@ Node.js (>= 22.13) + SQLite bawaan Node + frontend HTML/JS biasa.
 - **Nilai** dan **Rapor** per siswa (rata-rata per mapel, bisa dicetak)
 - **Pembayaran**: SPP dan pembayaran lain, total otomatis
 - **Ekspor Excel (.xlsx)** untuk siswa, guru, kelas, nilai, pembayaran, dan rekap absensi (mengikuti filter yang aktif)
+- **Ekspor PDF**: daftar (siswa, guru, kelas, nilai, pembayaran, rekap absensi), rapor per siswa, dan kuitansi pembayaran (tombol "Kuitansi" di tiap baris pembayaran)
 - **Pengguna & login**: peran admin/staf, ganti password
 
 ## Menjalankan

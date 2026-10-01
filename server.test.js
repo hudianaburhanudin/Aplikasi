@@ -66,3 +66,26 @@ test('ekspor Excel menghasilkan file xlsx', async (t) => {
   assert.strictEqual(buf.subarray(0, 2).toString(), 'PK');
   assert.strictEqual((await fetch(base + 'export/tidakada', { headers: { cookie } })).status, 404);
 });
+
+test('ekspor PDF: tabel, rapor, kuitansi', async (t) => {
+  const { server } = createApp(':memory:');
+  await new Promise((r) => server.listen(0, r));
+  t.after(() => server.close());
+  const base = `http://localhost:${server.address().port}/api/`;
+  const login = await fetch(base + 'login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'admin123' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const h = { 'Content-Type': 'application/json', cookie };
+  const sid = (await (await fetch(base + 'siswa', { method: 'POST', headers: h, body: JSON.stringify({ nama: 'Andi (Jr) \\ é', nis: '1' }) })).json()).id;
+  for (let i = 0; i < 80; i++) await fetch(base + 'siswa', { method: 'POST', headers: h, body: JSON.stringify({ nama: 'Siswa ' + i, alamat: 'Jalan panjang sekali '.repeat(8) }) });
+  const pid = (await (await fetch(base + 'pembayaran', { method: 'POST', headers: h, body: JSON.stringify({ siswa_id: sid, jumlah: 150000, tanggal: '2026-10-01' }) })).json()).id;
+  const get = async (p) => { const r = await fetch(base + p, { headers: { cookie } }); return { r, b: Buffer.from(await r.arrayBuffer()) }; };
+  for (const p of ['pdf/siswa', 'pdf/pembayaran', 'pdf/guru', 'pdf/rekap-absensi?kelas_id=1&bulan=2026-10', `pdf/rapor?siswa_id=${sid}`, `pdf/kuitansi?id=${pid}`]) {
+    const { r, b } = await get(p);
+    assert.strictEqual(r.status, 200, p);
+    assert.strictEqual(r.headers.get('content-type'), 'application/pdf');
+    assert.strictEqual(b.subarray(0, 5).toString(), '%PDF-');
+    assert.match(b.subarray(-8).toString(), /%%EOF/);
+  }
+  assert.strictEqual((await get('pdf/tidakada')).r.status, 404);
+  assert.strictEqual((await fetch(base + 'pdf/siswa')).status, 401);
+});

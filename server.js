@@ -4,6 +4,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { openDb, hashPassword, verifyPassword } = require('./db');
 const { buildXlsx } = require('./xlsx');
+const { tablePdf, raporPdf, kuitansiPdf } = require('./pdf');
+const rp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 // Konfigurasi tiap resource CRUD. `a` = alias tabel utama pada query `sel`.
 const RES = {
@@ -290,16 +292,28 @@ function createApp(dbFile) {
       db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(String(baru)), me.id);
       return send(res, 200, { ok: true });
     }
-    if (name === 'export' && method === 'GET') {
-      const key = parts[1], ex = EXPORTS[key];
+    if ((name === 'export' || name === 'pdf') && method === 'GET') {
+      const key = parts[1], today = new Date().toISOString().slice(0, 10);
+      const file = (buf, type, fname) => {
+        res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${fname}"` });
+        return res.end(buf);
+      };
+      if (name === 'pdf' && key === 'rapor') return file(raporPdf(rapor(q)), 'application/pdf', `rapor-${q.siswa_id}.pdf`);
+      if (name === 'pdf' && key === 'kuitansi') return file(kuitansiPdf(crud(RES.pembayaran, 'GET', Number(q.id)), rp), 'application/pdf', `kuitansi-${q.id}.pdf`);
+      const ex = EXPORTS[key];
       if (!ex) throw new HttpError(404, 'Data ekspor tidak ditemukan');
       const data = key === 'rekap-absensi' ? rekapAbsensi(q) : list(RES[key], q);
-      const buf = buildXlsx(ex[0], ex[1].map((c) => c[0]), data.map((r) => ex[1].map((c) => r[c[1]] ?? (key === 'rekap-absensi' ? 0 : ''))));
-      res.writeHead(200, {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="${key}-${new Date().toISOString().slice(0, 10)}.xlsx"`,
-      });
-      return res.end(buf);
+      const rows = data.map((r) => ex[1].map((c) => r[c[1]] ?? (key === 'rekap-absensi' ? 0 : '')));
+      if (name === 'export') {
+        return file(buildXlsx(ex[0], ex[1].map((c) => c[0]), rows),
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${key}-${today}.xlsx`);
+      }
+      const sub = `Dicetak ${today} · ${rows.length} data` + (q.q ? ` · pencarian "${q.q}"` : '') + (q.bulan ? ` · ${q.bulan}` : '');
+      const total = key === 'pembayaran' ? `Total: ${rp(data.reduce((a, r) => a + r.jumlah, 0))}` : null;
+      const money = ex[1].findIndex((c) => c[1] === 'jumlah' && key === 'pembayaran');
+      if (money >= 0) rows.forEach((r) => { r[money] = rp(r[money]); });
+      return file(tablePdf({ title: ex[0], subtitle: sub, headers: ex[1].map((c) => c[0]), rows, footer: total }),
+        'application/pdf', `${key}-${today}.pdf`);
     }
     if (name === 'dashboard') return send(res, 200, dashboard());
     if (name === 'rapor') return send(res, 200, rapor(q));
