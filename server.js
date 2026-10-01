@@ -9,6 +9,11 @@ const { tablePdf, raporPdf, kuitansiPdf } = require('./pdf');
 const rp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const todayWib = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
 
+// Tagihan dianggap terbayar dari pembayaran dengan siswa, jenis, dan periode yang sama.
+const TERBAYAR = `COALESCE((SELECT SUM(p.jumlah) FROM pembayaran p WHERE p.siswa_id = t.siswa_id AND p.jenis = t.jenis AND p.bulan IS t.periode), 0)`;
+const TSISA = `MAX(t.jumlah - ${TERBAYAR}, 0)`;
+const TSTATUS = `CASE WHEN ${TERBAYAR} >= t.jumlah THEN 'lunas' WHEN ${TERBAYAR} > 0 THEN 'sebagian' ELSE 'belum' END`;
+
 // Konfigurasi tiap resource CRUD.
 //  a: alias tabel utama pada `sel`; scopeCol/scopeKey: kolom & properti baris penentu lembaga;
 //  own: baris baru otomatis diberi lembaga aktif; writeRole: peran yang boleh menulis.
@@ -43,6 +48,20 @@ const RES = {
     search: ['s.nama', 's.nis'], filters: { kelas_id: 's.kelas_id', status: 's.status' }, order: 'l.id, s.nama',
     scopeCol: 's.lembaga_id', scopeKey: 'lembaga_id',
   },
+  tagihan: {
+    a: 't', table: 'tagihan', cols: ['siswa_id', 'jenis', 'periode', 'jumlah', 'jatuh_tempo', 'keterangan'], req: ['siswa_id', 'jumlah'],
+    sel: `SELECT t.*, s.lembaga_id, l.kode lembaga_kode, s.nama siswa_nama, s.nis, k.nama kelas_nama,
+            ${TERBAYAR} terbayar, ${TSISA} sisa, ${TSTATUS} status
+          FROM tagihan t JOIN siswa s ON s.id = t.siswa_id ${LJ}s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id`,
+    search: ['s.nama', 's.nis'],
+    filters: { siswa_id: 't.siswa_id', kelas_id: 's.kelas_id', periode: 't.periode', status: `(${TSTATUS})` },
+    order: 't.jatuh_tempo, t.id', scopeCol: 's.lembaga_id', scopeKey: 'lembaga_id',
+  },
+  pengumuman: {
+    a: 'a', table: 'pengumuman', cols: ['judul', 'isi'], req: ['judul', 'isi'], own: true,
+    sel: `SELECT a.*, l.kode lembaga_kode FROM pengumuman a ${LJ}a.lembaga_id`,
+    search: ['a.judul', 'a.isi'], filters: {}, order: 'a.id DESC', scopeCol: 'a.lembaga_id', scopeKey: 'lembaga_id',
+  },
   pendaftar: {
     a: 'd', table: 'pendaftar', own: true,
     cols: ['nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'alamat', 'nama_ayah', 'nama_ibu', 'telepon', 'asal_sekolah', 'status', 'catatan'], req: ['nama'],
@@ -74,6 +93,7 @@ const EXPORTS = {
   kelas: ['Data Kelas', [['Lembaga', 'lembaga_kode'], ['Kelas', 'nama'], ['Tahun Ajaran', 'tahun_ajaran'], ['Wali Kelas', 'wali_nama'], ['Jumlah Siswa', 'jumlah']]],
   nilai: ['Nilai Siswa', [['Lembaga', 'lembaga_kode'], ['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Mapel', 'mapel'], ['Jenis', 'jenis'], ['Nilai', 'nilai'], ['Semester', 'semester']]],
   pembayaran: ['Pembayaran', [['Lembaga', 'lembaga_kode'], ['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Jenis', 'jenis'], ['Periode', 'bulan'], ['Jumlah (Rp)', 'jumlah'], ['Keterangan', 'keterangan']]],
+  tagihan: ['Tagihan', [['Lembaga', 'lembaga_kode'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Jenis', 'jenis'], ['Periode', 'periode'], ['Jatuh Tempo', 'jatuh_tempo'], ['Jumlah (Rp)', 'jumlah'], ['Terbayar (Rp)', 'terbayar'], ['Sisa (Rp)', 'sisa'], ['Status', 'status']]],
   pendaftar: ['Data Pendaftar', [['Lembaga', 'lembaga_kode'], ['No. Daftar', 'no_daftar'], ['Nama', 'nama'], ['L/P', 'jk'], ['Tgl Lahir', 'tgl_lahir'], ['Asal Sekolah', 'asal_sekolah'], ['Telepon', 'telepon'], ['Status', 'status']]],
   'rekap-absensi': ['Rekap Absensi', [['NIS', 'nis'], ['Nama', 'nama'], ['Hadir', 'h'], ['Sakit', 's'], ['Izin', 'i'], ['Alpa', 'a']]],
 };
@@ -82,7 +102,11 @@ const KENAIKAN = ['naik', 'lulus', 'pindah', 'keluar'];
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
 const ABSEN = new Set(['H', 'S', 'I', 'A']);
-const ROLES = ['yayasan', 'admin', 'staf'];
+const ROLES = ['yayasan', 'admin', 'staf']; // 'wali' dikelola lewat /api/wali-akun
+const MIN_PW = 8;
+const PW_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+const genPassword = () => Array.from({ length: 10 }, () => PW_CHARS[crypto.randomInt(PW_CHARS.length)]).join('');
+const normPhone = (v) => { const d = String(v || '').replace(/\D/g, ''); return d.startsWith('62') ? '0' + d.slice(2) : d; };
 const ph = (a) => a.map(() => '?').join(',');
 
 class HttpError extends Error {
@@ -106,12 +130,15 @@ function createApp(dbFile) {
   const activeTahun = () => (db.prepare('SELECT nama FROM tahun_ajaran WHERE aktif = 1').get() || {}).nama;
   const PUBLIC_DIR = path.join(__dirname, 'public');
   const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-    '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+    '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png',
+    '.webmanifest': 'application/manifest+json', '.json': 'application/json' };
+  const SEC = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'same-origin',
+    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" };
 
   if (!db.prepare('SELECT 1 FROM users LIMIT 1').get()) {
     const pw = process.env.ADMIN_PASSWORD || crypto.randomBytes(9).toString('base64url');
-    db.prepare('INSERT INTO users (username, password, nama, role) VALUES (?,?,?,?)')
-      .run('admin', hashPassword(pw), 'Admin Yayasan', 'yayasan');
+    db.prepare('INSERT INTO users (username, password, nama, role, must_change) VALUES (?,?,?,?,?)')
+      .run('admin', hashPassword(pw), 'Admin Yayasan', 'yayasan', process.env.ADMIN_PASSWORD ? 0 : 1);
     if (!process.env.ADMIN_PASSWORD) console.log(`Akun awal dibuat -> username: admin  password: ${pw}  (catat dan segera ganti)`);
   }
 
@@ -122,7 +149,7 @@ function createApp(dbFile) {
     : db.prepare('SELECT lembaga_id id FROM user_lembaga WHERE user_id = ?').all(u.id).map((r) => r.id));
   const publicUser = (u) => {
     const ids = userLembagaIds(u);
-    return { id: u.id, username: u.username, nama: u.nama, role: u.role,
+    return { id: u.id, username: u.username, nama: u.nama, role: u.role, must_change: !!u.must_change,
       lembagas: ids.length ? db.prepare(`SELECT id, kode, nama FROM lembaga WHERE id IN (${ph(ids)}) ORDER BY id`).all(...ids) : [] };
   };
   // Lembaga yang sedang aktif dipilih lewat header X-Lembaga ("all" = semua yang diizinkan)
@@ -286,6 +313,115 @@ function createApp(dbFile) {
     throw new HttpError(404, 'Endpoint tidak ditemukan');
   }
 
+  // ---- tagihan massal ----
+  function generateTagihan(body, ctx) {
+    const kid = Number(body.kelas_id);
+    if (!kid) throw new HttpError(400, 'Pilih kelas');
+    lembagaOf('kelas', kid, ctx);
+    const jumlah = Number(body.jumlah);
+    if (!Number.isInteger(jumlah) || jumlah <= 0) throw new HttpError(400, 'Jumlah harus bilangan bulat positif');
+    const periode = str(body.periode, 7);
+    if (periode && !/^\d{4}-\d{2}$/.test(periode)) throw new HttpError(400, 'Periode harus berformat YYYY-MM');
+    const tempo = str(body.jatuh_tempo, 10);
+    if (tempo && !isDate(tempo)) throw new HttpError(400, 'Jatuh tempo tidak valid');
+    const jenis = str(body.jenis, 40) || 'SPP', ket = str(body.keterangan, 200);
+    const siswa = db.prepare("SELECT id FROM siswa WHERE kelas_id = ? AND status = 'aktif'").all(kid);
+    const ins = db.prepare('INSERT OR IGNORE INTO tagihan (siswa_id, jenis, periode, jumlah, jatuh_tempo, keterangan) VALUES (?,?,?,?,?,?)');
+    let dibuat = 0;
+    db.exec('BEGIN');
+    try { for (const s of siswa) dibuat += Number(ins.run(s.id, jenis, periode, jumlah, tempo, ket).changes); db.exec('COMMIT'); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { dibuat, dilewati: siswa.length - dibuat };
+  }
+
+  // ---- akun wali murid (dibuat petugas; wali hanya bisa membaca data anaknya) ----
+  function waliAkun(method, parts, q, body, ctx) {
+    const sub = parts[1];
+    const needSiswa = (v) => lembagaOf('siswa', Number(v) || 0, ctx);
+    if (method === 'GET' && !sub) {
+      needSiswa(q.siswa_id);
+      return db.prepare(`SELECT u.id user_id, u.username, u.nama, u.must_change FROM wali_siswa w JOIN users u ON u.id = w.user_id
+        WHERE w.siswa_id = ? ORDER BY u.username`).all(q.siswa_id);
+    }
+    if (method === 'POST' && !sub) {
+      needSiswa(body.siswa_id);
+      const siswa = db.prepare('SELECT * FROM siswa WHERE id = ?').get(body.siswa_id);
+      const raw = String(body.username || '').trim().toLowerCase();
+      const username = /^[\d+\s-]+$/.test(raw || siswa.telepon || '') ? normPhone(raw || siswa.telepon) : raw;
+      if (!/^[a-z0-9._-]{4,30}$/.test(username)) throw new HttpError(400, 'Username 4-30 karakter (huruf kecil, angka, titik, strip). Isi nomor HP wali atau username.');
+      const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+      if (u && u.role !== 'wali') throw new HttpError(409, 'Username sudah dipakai akun petugas');
+      db.exec('BEGIN');
+      try {
+        let uid, password = null;
+        if (u) uid = u.id;
+        else {
+          password = genPassword();
+          uid = Number(db.prepare('INSERT INTO users (username, password, nama, role, must_change) VALUES (?,?,?,?,1)')
+            .run(username, hashPassword(password), str(body.nama, 100) || siswa.wali || 'Wali ' + siswa.nama, 'wali').lastInsertRowid);
+        }
+        db.prepare('INSERT OR IGNORE INTO wali_siswa (user_id, siswa_id) VALUES (?,?)').run(uid, siswa.id);
+        db.exec('COMMIT');
+        return { user_id: uid, username, password, baru: !u };
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+    }
+    if (method === 'POST' && sub === 'reset') {
+      const uid = Number(body.user_id);
+      const ok = db.prepare(`SELECT 1 FROM wali_siswa w JOIN siswa s ON s.id = w.siswa_id JOIN users u ON u.id = w.user_id
+        WHERE w.user_id = ? AND u.role = 'wali' AND s.lembaga_id IN (${ph(ctx.scope.ids)})`).get(uid, ...ctx.scope.ids);
+      if (!ok) throw new HttpError(404, 'Akun wali tidak ditemukan');
+      const password = genPassword();
+      db.prepare('UPDATE users SET password = ?, must_change = 1 WHERE id = ?').run(hashPassword(password), uid);
+      for (const [t, s] of sessions) if (s.userId === uid) sessions.delete(t);
+      return { password };
+    }
+    if (method === 'DELETE') {
+      needSiswa(q.siswa_id);
+      const uid = Number(q.user_id);
+      const r = db.prepare('DELETE FROM wali_siswa WHERE user_id = ? AND siswa_id = ?').run(uid, q.siswa_id);
+      if (!r.changes) throw new HttpError(404, 'Tautan tidak ditemukan');
+      if (!db.prepare('SELECT 1 FROM wali_siswa WHERE user_id = ?').get(uid)) {
+        db.prepare("DELETE FROM users WHERE id = ? AND role = 'wali'").run(uid);
+        for (const [t, s] of sessions) if (s.userId === uid) sessions.delete(t);
+      }
+      return { ok: true };
+    }
+    throw new HttpError(405, 'Metode tidak didukung');
+  }
+
+  // ---- API untuk wali murid (hanya baca, hanya anak yang tertaut) ----
+  function waliApi(parts, ctx) {
+    const anak = () => db.prepare(`SELECT s.id, s.nis, s.nama, s.jk, s.status, s.lembaga_id, l.nama lembaga_nama, k.nama kelas_nama, g.nama wali_kelas
+      FROM wali_siswa w JOIN siswa s ON s.id = w.siswa_id JOIN lembaga l ON l.id = s.lembaga_id
+      LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN guru g ON g.id = k.wali_guru_id
+      WHERE w.user_id = ? ORDER BY s.nama`).all(ctx.user.id);
+    const what = parts[1];
+    if (what === 'anak' && !parts[2]) return anak();
+    if (what === 'anak') {
+      const siswa = anak().find((a) => a.id === Number(parts[2]));
+      if (!siswa) throw new HttpError(404, 'Data tidak ditemukan');
+      const id = siswa.id, bulan = todayWib().slice(0, 7);
+      const rek = (where, ...a) => db.prepare(`SELECT COALESCE(SUM(status = 'H'), 0) h, COALESCE(SUM(status = 'S'), 0) s, COALESCE(SUM(status = 'I'), 0) i, COALESCE(SUM(status = 'A'), 0) a
+        FROM absensi WHERE siswa_id = ? ${where}`).get(id, ...a);
+      return {
+        siswa,
+        absensi: { bulan, bulan_ini: rek("AND substr(tanggal, 1, 7) = ?", bulan), semua: rek(''),
+          terbaru: db.prepare('SELECT tanggal, status FROM absensi WHERE siswa_id = ? ORDER BY tanggal DESC LIMIT 14').all(id) },
+        nilai: { rata: db.prepare('SELECT mapel, ROUND(AVG(nilai), 1) rata, COUNT(*) jumlah FROM nilai WHERE siswa_id = ? GROUP BY mapel ORDER BY mapel').all(id),
+          daftar: db.prepare('SELECT mapel, jenis, nilai, semester, tanggal FROM nilai WHERE siswa_id = ? ORDER BY tanggal DESC, id DESC LIMIT 300').all(id) },
+        tagihan: db.prepare(`SELECT t.id, t.jenis, t.periode, t.jumlah, t.jatuh_tempo, t.keterangan, ${TERBAYAR} terbayar, ${TSISA} sisa, ${TSTATUS} status
+          FROM tagihan t WHERE t.siswa_id = ? ORDER BY t.periode DESC, t.id DESC`).all(id),
+        pembayaran: db.prepare('SELECT tanggal, jenis, bulan, jumlah, keterangan FROM pembayaran WHERE siswa_id = ? ORDER BY tanggal DESC, id DESC LIMIT 100').all(id),
+      };
+    }
+    if (what === 'pengumuman') {
+      const lids = [...new Set(anak().map((a) => a.lembaga_id))];
+      return lids.length ? db.prepare(`SELECT a.id, a.judul, a.isi, a.tanggal, l.nama lembaga FROM pengumuman a JOIN lembaga l ON l.id = a.lembaga_id
+        WHERE a.lembaga_id IN (${ph(lids)}) ORDER BY a.id DESC LIMIT 30`).all(...lids) : [];
+    }
+    throw new HttpError(404, 'Endpoint tidak ditemukan');
+  }
+
   function list(cfg, q, ctx) {
     const where = [], args = [];
     if (cfg.scopeCol) { where.push(`${cfg.scopeCol} IN (${ph(ctx.scope.ids)})`); args.push(...ctx.scope.ids); }
@@ -318,6 +454,7 @@ function createApp(dbFile) {
       }
       checkRefs(cfg, d, lid, ctx);
       if (cfg.table === 'pendaftar') fillPendaftar(d, lid, 'admin');
+      if (cfg.table === 'pengumuman') Object.assign(d, { dibuat_oleh: ctx.user.nama, tanggal: todayWib() });
       const keys = Object.keys(d);
       const r = db.prepare(`INSERT INTO ${cfg.table} (${keys.join(',')}) VALUES (${ph(keys)})`).run(...keys.map((k) => d[k]));
       const newId = Number(r.lastInsertRowid);
@@ -389,6 +526,8 @@ function createApp(dbFile) {
       guru: n(`SELECT COUNT(*) n FROM guru WHERE lembaga_id IN (${p})`, ...ids),
       kelas: n(`SELECT COUNT(*) n FROM kelas WHERE lembaga_id IN (${p})`, ...ids),
       pendaftar_baru: n(`SELECT COUNT(*) n FROM pendaftar WHERE status = 'baru' AND lembaga_id IN (${p})`, ...ids),
+      tunggakan: n(`SELECT COALESCE(SUM(sisa), 0) n FROM (SELECT ${TSISA} sisa FROM tagihan t JOIN siswa s ON s.id = t.siswa_id
+        WHERE s.lembaga_id IN (${p}) AND t.jatuh_tempo < ?)`, ...ids, today),
       absensi_hari_ini: abs,
       pembayaran_bulan_ini: n(`SELECT COALESCE(SUM(p.jumlah), 0) n FROM pembayaran p JOIN siswa s ON s.id = p.siswa_id
         WHERE substr(p.tanggal, 1, 7) = ? AND s.lembaga_id IN (${p})`, bulan, ...ids),
@@ -434,22 +573,22 @@ function createApp(dbFile) {
     };
     const lastYayasan = (u) => u.role === 'yayasan' && db.prepare("SELECT COUNT(*) n FROM users WHERE role = 'yayasan'").get().n <= 1;
     const target = id ? db.prepare('SELECT * FROM users WHERE id = ?').get(id) : null;
-    if (id && (!target || !canManage(target))) throw new HttpError(404, 'Pengguna tidak ditemukan');
+    if (id && (!target || target.role === 'wali' || !canManage(target))) throw new HttpError(404, 'Pengguna tidak ditemukan');
 
     if (method === 'GET') {
-      return db.prepare('SELECT id, username, nama, role FROM users ORDER BY username').all()
+      return db.prepare("SELECT id, username, nama, role FROM users WHERE role != 'wali' ORDER BY username").all()
         .map((u) => ({ ...u, lembaga_ids: idsOf(u.id) }))
         .filter((u) => me.role === 'yayasan' || (u.role !== 'yayasan' && u.lembaga_ids.some((i) => myIds.includes(i))));
     }
     if (method === 'POST') {
       const { username, password, nama, role = 'staf' } = body;
       if (!username || !password || !nama) throw new HttpError(400, 'Username, password, dan nama wajib diisi');
-      if (String(password).length < 6) throw new HttpError(400, 'Password minimal 6 karakter');
+      if (String(password).length < MIN_PW) throw new HttpError(400, `Password minimal ${MIN_PW} karakter`);
       if (!roleOk(role)) throw new HttpError(400, 'Role tidak valid');
       const arr = parseIds(role, body.lembaga_ids);
       db.exec('BEGIN');
       try {
-        const r = db.prepare('INSERT INTO users (username, password, nama, role) VALUES (?,?,?,?)')
+        const r = db.prepare('INSERT INTO users (username, password, nama, role, must_change) VALUES (?,?,?,?,1)')
           .run(String(username).trim(), hashPassword(String(password)), String(nama).trim(), role);
         setLembaga(Number(r.lastInsertRowid), arr);
         db.exec('COMMIT');
@@ -460,13 +599,13 @@ function createApp(dbFile) {
       const role = body.role || target.role;
       if (body.role && !roleOk(role)) throw new HttpError(400, 'Role tidak valid');
       if (role !== target.role && (target.id === me.id || lastYayasan(target))) throw new HttpError(400, 'Role akun ini tidak dapat diubah');
-      if (body.password && String(body.password).length < 6) throw new HttpError(400, 'Password minimal 6 karakter');
+      if (body.password && String(body.password).length < MIN_PW) throw new HttpError(400, `Password minimal ${MIN_PW} karakter`);
       const arr = 'lembaga_ids' in body || role !== target.role ? parseIds(role, 'lembaga_ids' in body ? body.lembaga_ids : idsOf(target.id)) : null;
       db.exec('BEGIN');
       try {
         db.prepare('UPDATE users SET nama = ?, role = ? WHERE id = ?').run(String(body.nama || target.nama).trim(), role, target.id);
         if (body.password) {
-          db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(String(body.password)), target.id);
+          db.prepare('UPDATE users SET password = ?, must_change = 1 WHERE id = ?').run(hashPassword(String(body.password)), target.id);
           for (const [t, s] of sessions) if (s.userId === target.id) sessions.delete(t);
         }
         if (arr) setLembaga(target.id, arr);
@@ -509,7 +648,7 @@ function createApp(dbFile) {
   };
 
   const send = (res, status, data, headers = {}) => {
-    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
     res.end(JSON.stringify(data));
   };
 
@@ -521,18 +660,21 @@ function createApp(dbFile) {
 
     if (name === 'login' && method === 'POST') {
       const ip = clientIp(req);
-      const at = attempts.get(ip);
-      if (at && at.n >= 5 && at.until > Date.now()) throw new HttpError(429, 'Terlalu banyak percobaan, coba lagi nanti');
       const { username, password } = await readBody(req);
-      const u = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username || ''));
+      const uname = String(username || '').trim();
+      // batas kegagalan: per IP (20 / 5 menit) dan per username (10 / 15 menit)
+      const keys = [[ip, 20, 5 * 60e3], ['u:' + uname.toLowerCase(), 10, 15 * 60e3]];
+      for (const [k, max] of keys) { const a = attempts.get(k); if (a && a.n >= max && a.until > Date.now()) throw new HttpError(429, 'Terlalu banyak percobaan, coba lagi nanti'); }
+      const u = db.prepare('SELECT * FROM users WHERE username = ?').get(uname);
       if (!u || !verifyPassword(String(password || ''), u.password)) {
-        attempts.set(ip, { n: (at && at.until > Date.now() ? at.n : 0) + 1, until: Date.now() + 5 * 60e3 });
+        for (const [k, , win] of keys) { const a = attempts.get(k); attempts.set(k, { n: (a && a.until > Date.now() ? a.n : 0) + 1, until: Date.now() + win }); }
         throw new HttpError(401, 'Username atau password salah');
       }
-      attempts.delete(ip);
+      attempts.delete(ip); attempts.delete('u:' + uname.toLowerCase());
       const token = crypto.randomBytes(24).toString('hex');
       sessions.set(token, { userId: u.id, exp: Date.now() + 12 * 3600e3 });
-      return send(res, 200, publicUser(u), { 'Set-Cookie': `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200` });
+      const secure = process.env.TRUST_PROXY && req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+      return send(res, 200, publicUser(u), { 'Set-Cookie': `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secure}` });
     }
 
     if (name === 'public') return publicApi(req, res, parts);
@@ -541,6 +683,10 @@ function createApp(dbFile) {
     if (!sess) throw new HttpError(401, 'Silakan login terlebih dahulu');
     const ctx = { user: sess.user, scope: scopeOf(sess.user, req) };
     const q = Object.fromEntries(url.searchParams);
+
+    // Wali hanya boleh mengakses /api/wali; akun yang wajib ganti password hanya boleh ganti password.
+    if (ctx.user.role === 'wali' && !['me', 'logout', 'password', 'wali'].includes(name)) throw new HttpError(403, 'Akses ditolak');
+    if (ctx.user.must_change && !['me', 'logout', 'password'].includes(name)) throw new HttpError(403, 'Anda harus mengganti password terlebih dahulu');
 
     if (name === 'logout' && method === 'POST') {
       sessions.delete(sess.token);
@@ -551,8 +697,9 @@ function createApp(dbFile) {
       const { lama, baru } = await readBody(req);
       const u = db.prepare('SELECT * FROM users WHERE id = ?').get(ctx.user.id);
       if (!verifyPassword(String(lama || ''), u.password)) throw new HttpError(400, 'Password lama salah');
-      if (String(baru || '').length < 6) throw new HttpError(400, 'Password baru minimal 6 karakter');
-      db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(String(baru)), u.id);
+      if (String(baru || '').length < MIN_PW) throw new HttpError(400, `Password baru minimal ${MIN_PW} karakter`);
+      if (baru === lama) throw new HttpError(400, 'Password baru harus berbeda dari password lama');
+      db.prepare('UPDATE users SET password = ?, must_change = 0 WHERE id = ?').run(hashPassword(String(baru)), u.id);
       return send(res, 200, { ok: true });
     }
     if ((name === 'export' || name === 'pdf') && method === 'GET') {
@@ -580,6 +727,9 @@ function createApp(dbFile) {
       return file(tablePdf({ title: ex[0], subtitle: sub, headers: cols.map((i) => ex[1][i][0]), rows: rows.map((r) => cols.map((i) => r[i])), footer: total }),
         'application/pdf', `${key}-${today}.pdf`);
     }
+    if (name === 'wali') return send(res, 200, waliApi(parts, ctx));
+    if (name === 'wali-akun') return send(res, 200, waliAkun(method, parts, q, method === 'POST' ? await readBody(req) : {}, ctx));
+    if (name === 'tagihan' && parts[1] === 'generate' && method === 'POST') return send(res, 200, generateTagihan(await readBody(req), ctx));
     if (name === 'pendaftar' && parts[2] === 'terima' && method === 'POST') return send(res, 200, terimaPendaftar(id, await readBody(req), ctx));
     if (name === 'kenaikan' && method === 'POST') return send(res, 200, kenaikan(await readBody(req), ctx));
     if (name === 'riwayat') return send(res, 200, riwayat(q, ctx));
@@ -599,12 +749,12 @@ function createApp(dbFile) {
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname.startsWith('/api/')) return await api(req, res, url);
-      const rel = url.pathname === '/' ? 'index.html' : url.pathname === '/daftar' ? 'daftar.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
+      const rel = url.pathname === '/' ? 'index.html' : url.pathname === '/daftar' ? 'daftar.html' : url.pathname === '/wali' ? 'wali.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
       const file = path.join(PUBLIC_DIR, rel);
       if (!file.startsWith(PUBLIC_DIR + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
         res.writeHead(404); return res.end('Tidak ditemukan');
       }
-      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
+      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache', ...SEC });
       fs.createReadStream(file).pipe(res);
     } catch (e) {
       let status = e.status || 500, msg = e.message;

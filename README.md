@@ -13,6 +13,11 @@ Tanpa dependensi eksternal: Node.js (>= 22.13) + SQLite bawaan Node + frontend H
   (batas per IP, kolom jebakan, deteksi ganda). Admin menyeleksi (baru → terverifikasi → diterima/cadangan/ditolak)
   lalu **Jadikan siswa** dengan satu klik.
 - **Kenaikan kelas & kelulusan** massal (atomik), pindah/keluar, **alumni**, dan **riwayat** tiap siswa
+- **Portal wali murid (PWA)** di `/wali`: dipasang di layar utama HP; wali melihat nilai, absensi, tagihan,
+  riwayat pembayaran, dan pengumuman anaknya (satu akun bisa untuk beberapa anak lintas lembaga). Petugas membuat
+  akun dari daftar siswa (**Akun wali**): password sementara acak tampil sekali + tombol kirim WhatsApp;
+  wali wajib mengganti password saat pertama masuk. Wali hanya bisa membaca data anaknya sendiri.
+- **Tagihan** (buat massal per kelas; status lunas/sebagian/belum otomatis dari pembayaran) dan **Pengumuman**
 - **Siswa, Guru, Kelas**: tambah/ubah/hapus, pencarian, filter (NIS boleh sama antar lembaga)
 - **Absensi** harian per kelas + rekap bulanan
 - **Nilai** dan **Rapor** per siswa
@@ -42,5 +47,5 @@ Skema database bermigrasi otomatis (versi tersimpan di `PRAGMA user_version`).
 ## Rencana
 1. ✅ Fondasi multi-lembaga, peran, tahun ajaran
 2. ✅ Pendaftaran online (PPDB) → seleksi → siswa, kenaikan kelas, kelulusan/alumni
-3. Portal wali murid (PWA) + notifikasi, lalu dibungkus untuk Play Store/App Store
-4. Deploy VPS (Docker, HTTPS, backup otomatis)
+3. ✅ Portal wali murid (PWA). Berikutnya: notifikasi push dan pembungkus toko (lihat `mobile/README.md`)
+4. Deploy VPS (Docker, HTTPS, backup otomatis) — wajib sebelum dipakai wali

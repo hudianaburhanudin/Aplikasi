@@ -47,6 +47,20 @@ const MIGRATIONS = [
      jenis TEXT NOT NULL, dari_kelas_id INTEGER REFERENCES kelas(id) ON DELETE SET NULL,
      ke_kelas_id INTEGER REFERENCES kelas(id) ON DELETE SET NULL, tahun_ajaran TEXT, tanggal TEXT NOT NULL, keterangan TEXT);
    CREATE INDEX idx_mutasi_siswa ON mutasi(siswa_id);`,
+  // v3: portal wali, tagihan, pengumuman
+  `ALTER TABLE users ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0;
+   CREATE TABLE wali_siswa (
+     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     siswa_id INTEGER NOT NULL REFERENCES siswa(id) ON DELETE CASCADE, PRIMARY KEY (user_id, siswa_id));
+   CREATE INDEX idx_wali_siswa ON wali_siswa(siswa_id);
+   CREATE TABLE tagihan (
+     id INTEGER PRIMARY KEY, siswa_id INTEGER NOT NULL REFERENCES siswa(id) ON DELETE CASCADE,
+     jenis TEXT NOT NULL DEFAULT 'SPP', periode TEXT, jumlah INTEGER NOT NULL, jatuh_tempo TEXT, keterangan TEXT);
+   CREATE UNIQUE INDEX uq_tagihan ON tagihan(siswa_id, jenis, COALESCE(periode, ''));
+   CREATE TABLE pengumuman (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id), judul TEXT NOT NULL, isi TEXT NOT NULL,
+     tanggal TEXT NOT NULL, dibuat_oleh TEXT);
+   CREATE INDEX idx_pengumuman ON pengumuman(lembaga_id, id);`,
 ];
 
 function migrate(db) {

@@ -93,6 +93,10 @@ test('isolasi data antar lembaga dan peran', async (t) => {
   assert.strictEqual((await yys('users', 'POST', { username: 'adminsmp', password: 'rahasia1', nama: 'Admin SMP', role: 'admin', lembaga_ids: [SMP] })).status, 200);
   const adm = client();
   await adm('login', 'POST', { username: 'adminsmp', password: 'rahasia1' });
+  assert.strictEqual((await adm('siswa')).status, 403); // wajib ganti password dulu
+  assert.strictEqual((await adm('password', 'POST', { lama: 'rahasia1', baru: 'rahasia1' })).status, 400);
+  assert.strictEqual((await adm('password', 'POST', { lama: 'rahasia1', baru: 'pendek' })).status, 400);
+  assert.strictEqual((await adm('password', 'POST', { lama: 'rahasia1', baru: 'rahasia2x' })).status, 200);
   const am = (await adm('me')).data;
   assert.deepStrictEqual(am.lembagas.map((l) => l.kode), ['SMP']);
 
@@ -122,6 +126,7 @@ test('isolasi data antar lembaga dan peran', async (t) => {
   assert.strictEqual((await adm('users')).data.length, 2);
   const staf = client();
   await staf('login', 'POST', { username: 's1', password: 'rahasia1' });
+  await staf('password', 'POST', { lama: 'rahasia1', baru: 'rahasia2x' });
   assert.strictEqual((await staf('users')).status, 403);
   assert.strictEqual((await staf('siswa')).data.length, 2);
   assert.strictEqual((await staf('siswa', 'GET', null, MI)).status, 403);
@@ -216,10 +221,107 @@ test('PPDB online sampai kelulusan', async (t) => {
   // isolasi: admin MI tidak melihat pendaftar/riwayat SMP
   await yys('users', 'POST', { username: 'adminmi', password: 'rahasia1', nama: 'A', role: 'admin', lembaga_ids: [MI] });
   const mi = client(); await mi('login', 'POST', { username: 'adminmi', password: 'rahasia1' });
+  await mi('password', 'POST', { lama: 'rahasia1', baru: 'rahasia2x' });
   assert.deepStrictEqual((await mi('pendaftar')).data.map((x) => x.no_daftar), ['MI-2026-0001']);
   assert.strictEqual((await mi(`pendaftar/${pid}`)).status, 404);
   assert.strictEqual((await mi(`riwayat?siswa_id=${sid}`)).status, 404);
   assert.strictEqual((await mi('kenaikan', 'POST', { siswa_ids: [s2], aksi: 'lulus' })).status, 404);
   assert.strictEqual((await mi('export/pendaftar')).status, 200);
   assert.strictEqual((await yys('dashboard', 'GET', null, MI)).data.pendaftar_baru, 1);
+});
+
+test('portal wali murid, tagihan, dan pengumuman', async (t) => {
+  const { client } = await boot(t);
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [SMP, MI] = [id('SMP'), id('MI')];
+  const bulan = tgl.slice(0, 7);
+
+  const kelas = (await yys('kelas', 'POST', { nama: 'VII-A' }, SMP)).data.id;
+  const a1 = (await yys('siswa', 'POST', { nama: 'Anak Satu', nis: '1', kelas_id: kelas, telepon: '+62 812-3456-7890' }, SMP)).data.id;
+  const a2 = (await yys('siswa', 'POST', { nama: 'Anak Dua', nis: '2', kelas_id: kelas }, SMP)).data.id;
+  const kMI = (await yys('kelas', 'POST', { nama: 'I-A' }, MI)).data.id;
+  const a3 = (await yys('siswa', 'POST', { nama: 'Adik MI', nis: '3', kelas_id: kMI }, MI)).data.id;
+  const lain = (await yys('siswa', 'POST', { nama: 'Anak Orang Lain', nis: '9', kelas_id: kelas }, SMP)).data.id;
+
+  // tagihan massal + status otomatis dari pembayaran
+  assert.strictEqual((await yys('tagihan/generate', 'POST', { kelas_id: kelas, periode: bulan, jumlah: 150000, jatuh_tempo: '2020-01-10' }, SMP)).data.dibuat, 3);
+  assert.deepStrictEqual((await yys('tagihan/generate', 'POST', { kelas_id: kelas, periode: bulan, jumlah: 150000 }, SMP)).data, { dibuat: 0, dilewati: 3 });
+  assert.strictEqual((await yys('tagihan/generate', 'POST', { kelas_id: kelas, periode: 'x', jumlah: 1 }, SMP)).status, 400);
+  assert.strictEqual((await yys('tagihan/generate', 'POST', { kelas_id: kMI, periode: bulan, jumlah: 1 }, SMP)).status, 404);
+  await yys('pembayaran', 'POST', { siswa_id: a1, jumlah: 100000, tanggal: tgl, jenis: 'SPP', bulan });
+  let tg = (await yys('tagihan?siswa_id=' + a1, 'GET', null, SMP)).data[0];
+  assert.deepStrictEqual([tg.terbayar, tg.sisa, tg.status], [100000, 50000, 'sebagian']);
+  await yys('pembayaran', 'POST', { siswa_id: a1, jumlah: 50000, tanggal: tgl, jenis: 'SPP', bulan });
+  assert.strictEqual((await yys('tagihan?siswa_id=' + a1, 'GET', null, SMP)).data[0].status, 'lunas');
+  assert.strictEqual((await yys('tagihan?status=belum', 'GET', null, SMP)).data.length, 2);
+  assert.strictEqual((await yys('dashboard', 'GET', null, SMP)).data.tunggakan, 300000); // 2 siswa x 150rb lewat jatuh tempo
+
+  // pengumuman per lembaga
+  assert.strictEqual((await yys('pengumuman', 'POST', { judul: 'Libur', isi: 'Libur Senin' }, SMP)).status, 200);
+  assert.strictEqual((await yys('pengumuman', 'POST', { judul: 'Rapat MI', isi: 'x' }, MI)).status, 200);
+
+  // petugas membuat akun wali (nomor HP dinormalisasi), 1 wali -> 2 anak lintas lembaga
+  const w1 = (await yys('wali-akun', 'POST', { siswa_id: a1 })).status; // butuh lembaga? tidak, siswa menentukan
+  assert.strictEqual(w1, 200);
+  const acc = (await yys('wali-akun?siswa_id=' + a1)).data;
+  assert.strictEqual(acc[0].username, '081234567890');
+  const link2 = (await yys('wali-akun', 'POST', { siswa_id: a3, username: '081234567890' })).data; // tautkan adik di MI
+  assert.deepStrictEqual([link2.baru, link2.password], [false, null]);
+  assert.strictEqual((await yys('wali-akun', 'POST', { siswa_id: a2, username: 'ab' })).status, 400);
+  const reset = (await yys('wali-akun/reset', 'POST', { user_id: acc[0].user_id })).data.password;
+  assert.match(reset, /^[A-Za-z0-9]{10}$/);
+
+  const wali = client();
+  assert.strictEqual((await wali('login', 'POST', { username: '081234567890', password: 'salahsekali' })).status, 401);
+  const lw = await wali('login', 'POST', { username: '081234567890', password: reset });
+  assert.deepStrictEqual([lw.data.role, lw.data.must_change], ['wali', true]);
+  assert.strictEqual((await wali('wali/anak')).status, 403);          // wajib ganti password
+  assert.strictEqual((await wali('password', 'POST', { lama: reset, baru: 'sandiwali99' })).status, 200);
+  const anak = (await wali('wali/anak')).data;
+  assert.deepStrictEqual(anak.map((x) => x.nama).sort(), ['Adik MI', 'Anak Satu']);
+
+  const d = (await wali('wali/anak/' + a1)).data;
+  assert.strictEqual(d.tagihan[0].status, 'lunas');
+  assert.strictEqual(d.pembayaran.length, 2);
+  assert.strictEqual((await wali('wali/anak/' + lain)).status, 404);   // bukan anaknya
+  assert.strictEqual((await wali('wali/anak/' + a2)).status, 404);
+  assert.deepStrictEqual((await wali('wali/pengumuman')).data.map((x) => x.judul).sort(), ['Libur', 'Rapat MI']);
+
+  // wali tidak bisa memakai API petugas sama sekali
+  for (const p of ['siswa', 'nilai', 'pembayaran', 'tagihan', 'users', 'dashboard', 'lembaga', 'pdf/siswa', 'export/siswa', `rapor?siswa_id=${a1}`, `riwayat?siswa_id=${a1}`, 'wali-akun?siswa_id=' + a1]) {
+    assert.strictEqual((await wali(p)).status, 403, p);
+  }
+  assert.strictEqual((await wali('siswa', 'POST', { nama: 'x' })).status, 403);
+  assert.strictEqual((await wali(`siswa/${a1}`, 'DELETE')).status, 403);
+  assert.strictEqual((await wali('wali-akun/reset', 'POST', { user_id: 1 })).status, 403);
+
+  // wali lain tidak melihat anak ini; akun wali tak muncul di daftar pengguna petugas
+  const other = (await yys('wali-akun', 'POST', { siswa_id: lain, username: 'ortu.lain', nama: 'Ortu Lain' })).data;
+  assert.match(other.password, /^[A-Za-z0-9]{10}$/);
+  const w2 = client(); await w2('login', 'POST', { username: 'ortu.lain', password: other.password });
+  await w2('password', 'POST', { lama: other.password, baru: 'sandilain88' });
+  assert.deepStrictEqual((await w2('wali/anak')).data.map((x) => x.nama), ['Anak Orang Lain']);
+  assert.strictEqual((await w2('wali/anak/' + a1)).status, 404);
+  assert.strictEqual((await yys('users')).data.some((u) => u.role === 'wali'), false);
+  assert.strictEqual((await yys(`users/${other.user_id}`, 'DELETE')).status, 404);
+
+  // admin MI hanya mengurus wali anak MI
+  await yys('users', 'POST', { username: 'adminmi', password: 'rahasia1', nama: 'A', role: 'admin', lembaga_ids: [MI] });
+  const mi = client(); await mi('login', 'POST', { username: 'adminmi', password: 'rahasia1' });
+  await mi('password', 'POST', { lama: 'rahasia1', baru: 'rahasia2x' });
+  assert.strictEqual((await mi('wali-akun', 'POST', { siswa_id: a1 })).status, 404);
+  assert.strictEqual((await mi('wali-akun/reset', 'POST', { user_id: other.user_id })).status, 404);
+  assert.strictEqual((await mi('wali-akun/reset', 'POST', { user_id: acc[0].user_id })).status, 200); // wali ini punya anak di MI
+  assert.strictEqual((await wali('wali/anak')).status, 401);                                        // sesi lama dicabut
+
+  // melepas tautan: wali tanpa anak ikut dihapus
+  assert.strictEqual((await yys(`wali-akun?siswa_id=${lain}&user_id=${other.user_id}`, 'DELETE')).status, 200);
+  assert.strictEqual((await w2('wali/anak')).status, 401);
+
+  // pembatasan login per username
+  const bf = client();
+  for (let i = 0; i < 10; i++) await bf('login', 'POST', { username: 'target', password: 'x' });
+  assert.strictEqual((await bf('login', 'POST', { username: 'target', password: 'x' })).status, 429);
 });

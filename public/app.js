@@ -68,8 +68,51 @@ function showInfo(title, html) {
   $('#dlgForm').onsubmit = null; $('#cancelBtn').onclick = () => $('#dlg').close(); $('#dlg').showModal();
 }
 
+// ---- akun wali murid ----
+const waPhone = (v) => { const d = String(v || '').replace(/\D/g, ''); return /^\d{9,15}$/.test(d) ? (d.startsWith('0') ? '62' + d.slice(1) : d) : ''; };
+const waliDialog = guard(async (r) => {
+  const f = $('#dlgForm');
+  const render = async (cred) => {
+    const acc = await api('wali-akun?siswa_id=' + r.id);
+    const text = cred ? `Aplikasi Wali Murid Miftahul Ulum\nBuka: ${location.origin}/wali\nUsername: ${cred.username}\nPassword sementara: ${cred.password}\n(Wajib diganti saat pertama masuk)` : '';
+    f.innerHTML = `<h3>Akun wali: ${esc(r.nama)}</h3>
+      ${cred ? `<div class="card" style="background:#fff8e6"><b>Berikan ke wali (hanya tampil sekali)</b><pre style="white-space:pre-wrap;margin:6px 0">${esc(text)}</pre>
+        <button type="button" class="btn small" data-act="copy">Salin</button> <a class="btn small" target="_blank" rel="noopener" href="https://wa.me/${waPhone(cred.username)}?text=${encodeURIComponent(text)}" style="text-decoration:none">Kirim lewat WhatsApp</a></div>` : ''}
+      <div class="tablewrap"><table><thead><tr><th>Username</th><th>Nama</th><th>Status</th><th></th></tr></thead><tbody>${acc.map((a) =>
+        `<tr><td>${esc(a.username)}</td><td>${esc(a.nama)}</td><td>${a.must_change ? 'belum ganti password' : 'aktif'}</td><td class="act">
+        <button type="button" class="btn small" data-act="reset" data-uid="${a.user_id}">Reset password</button>
+        <button type="button" class="btn small danger" data-act="unlink" data-uid="${a.user_id}">Lepas</button></td></tr>`).join('') || '<tr><td colspan="4" class="empty">Belum ada akun wali.</td></tr>'}</tbody></table></div>
+      <div class="fields"><label>No. HP wali / username<input id="wu" value="${esc(r.telepon || '')}"></label><label>Nama wali<input id="wn" value="${esc(r.wali || '')}"></label></div>
+      <p class="muted small" style="margin:0;color:var(--mut)">Isi username/No. HP yang sudah ada untuk menautkan anak lain ke akun wali yang sama (kakak-adik).</p>
+      <p class="error" id="formErr"></p>
+      <div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button><button type="button" class="btn primary" data-act="add">Buat / tautkan akun</button></div>`;
+    $('#cancelBtn').onclick = () => $('#dlg').close();
+    f.onclick = async (e) => {
+      const b = e.target.closest('[data-act]'); if (!b) return;
+      try {
+        if (b.dataset.act === 'copy') { await navigator.clipboard.writeText(text); return toast('Disalin'); }
+        if (b.dataset.act === 'add') {
+          const x = await api('wali-akun', { method: 'POST', body: { siswa_id: r.id, username: $('#wu').value, nama: $('#wn').value } });
+          return render(x.password ? { username: x.username, password: x.password } : null);
+        }
+        if (b.dataset.act === 'reset') {
+          if (!confirm('Buat password sementara baru untuk akun ini?')) return;
+          const u = acc.find((a) => a.user_id === Number(b.dataset.uid));
+          return render({ username: u.username, password: (await api('wali-akun/reset', { method: 'POST', body: { user_id: u.user_id } })).password });
+        }
+        if (b.dataset.act === 'unlink') {
+          if (!confirm('Lepas akun ini dari siswa? Akun dihapus jika tidak punya anak lain.')) return;
+          await api(`wali-akun?siswa_id=${r.id}&user_id=${b.dataset.uid}`, { method: 'DELETE' }); return render();
+        }
+      } catch (err) { $('#formErr').textContent = err.message; }
+    };
+  };
+  f.onsubmit = (e) => e.preventDefault();
+  await render(); $('#dlg').showModal();
+});
+
 // ---- opsi dropdown ----
-const optKelas = async () => (await api('kelas')).map((k) => ({ value: k.id, label: k.nama }));
+const optKelas = async () => (await api('kelas')).map((k) => ({ value: k.id, label: (multi() ? k.lembaga_kode + ' · ' : '') + k.nama }));
 const optGuru = async () => (await api('guru')).map((g) => ({ value: g.id, label: g.nama }));
 const optSiswa = async () => (await api('siswa?status=aktif')).map((s) => ({ value: s.id, label: `${s.nis || '-'} · ${s.nama}` }));
 const optTahun = async () => (await api('tahun_ajaran')).map((t) => ({ value: t.nama, label: t.nama + (t.aktif ? ' (aktif)' : ''), active: !!t.aktif }));
@@ -84,7 +127,7 @@ function crudPage(cfg) {
     main.innerHTML = `<h2>${cfg.title}</h2><div class="bar">
       <input id="q" placeholder="Cari…" type="search">
       ${filters.map((f) => `<select data-f="${f.key}"><option value="">${f.label}</option>${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select>`).join('')}
-      <span class="grow"></span>${cfg.noExport ? '' : '<button class="btn" id="xls">⬇ Excel</button><button class="btn" id="pdf">⬇ PDF</button>'}<button class="btn primary" id="add">+ Tambah</button></div>
+      <span class="grow"></span>${(cfg.extra || []).map((b, i) => `<button class="btn" data-x="${i}">${b.label}</button>`).join('')}${cfg.noExport ? '' : '<button class="btn" id="xls">⬇ Excel</button><button class="btn" id="pdf">⬇ PDF</button>'}<button class="btn primary" id="add">+ Tambah</button></div>
       <div class="tablewrap" id="tbl"></div><p id="foot" class="empty" style="text-align:left"></p>${cfg.note || ''}`;
     filters.forEach((f) => { if (f.def) main.querySelector(`[data-f="${f.key}"]`).value = f.def; });
     const load = guard(async () => {
@@ -117,6 +160,7 @@ function crudPage(cfg) {
       });
     });
     $('#add').onclick = () => form();
+    main.querySelectorAll('[data-x]').forEach((b) => { b.onclick = () => cfg.extra[b.dataset.x].run(load); });
     if (!cfg.noExport) $('#xls').onclick = () => {
       const params = { q: $('#q').value };
       main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
@@ -141,7 +185,7 @@ pages.siswa = crudPage({
   columns: [{ key: 'nis', label: 'NIS' }, { key: 'nama', label: 'Nama' }, { key: 'jk', label: 'L/P' },
     { key: 'kelas_nama', label: 'Kelas' }, { key: 'wali', label: 'Wali' }, { key: 'telepon', label: 'Telepon' },
     { label: 'Status', render: (r) => `<span class="badge">${esc(r.status)}</span>` }],
-  rowActions: [{ name: 'riwayat', label: 'Riwayat', run: guard(async (r) => {
+  rowActions: [{ name: 'wali', label: 'Akun wali', run: waliDialog }, { name: 'riwayat', label: 'Riwayat', run: guard(async (r) => {
     const h = await api('riwayat?siswa_id=' + r.id);
     showInfo('Riwayat ' + r.nama, h.length ? `<div class="tablewrap"><table><thead><tr><th>Tanggal</th><th>Jenis</th><th>Dari</th><th>Ke</th><th>Tahun</th></tr></thead><tbody>${h.map((m) =>
       `<tr><td>${esc(m.tanggal)}</td><td>${esc(m.jenis)}</td><td>${esc(m.dari_kelas)}</td><td>${esc(m.ke_kelas)}</td><td>${esc(m.tahun_ajaran)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Belum ada riwayat.</p>');
@@ -213,6 +257,33 @@ pages.tahun = crudPage({
     { name: 'aktif', label: 'Tahun ajaran aktif', blank: false, default: 0, options: [{ value: 0, label: 'Tidak' }, { value: 1, label: 'Ya (menonaktifkan yang lain)' }] }],
 });
 
+pages.tagihan = crudPage({
+  key: 'tagihan', title: 'Tagihan', single: 'Tagihan',
+  note: '<p class="empty" style="text-align:left">Status tagihan dihitung otomatis dari menu Pembayaran: pembayaran dengan siswa, jenis, dan periode yang sama. Wali melihatnya di aplikasi.</p>',
+  filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }, { key: 'status', label: 'Semua status', load: async () => ['belum', 'sebagian', 'lunas'].map((v) => ({ value: v, label: v })) }],
+  columns: [{ key: 'siswa_nama', label: 'Siswa' }, { key: 'kelas_nama', label: 'Kelas' }, { key: 'jenis', label: 'Jenis' }, { key: 'periode', label: 'Periode' }, { key: 'jatuh_tempo', label: 'Jatuh tempo' },
+    { label: 'Jumlah', render: (r) => rp(r.jumlah) }, { label: 'Terbayar', render: (r) => rp(r.terbayar) }, { label: 'Sisa', render: (r) => rp(r.sisa) },
+    { label: 'Status', render: (r) => `<span class="badge">${esc(r.status)}</span>` }],
+  footer: (rows) => `${rows.length} tagihan · sisa ${rp(rows.reduce((a, r) => a + r.sisa, 0))}`,
+  extra: [{ label: '⚡ Buat tagihan massal', run: guard(async (reload) => {
+    const kelas = await optKelas();
+    openForm('Buat tagihan untuk satu kelas', [{ name: 'kelas_id', label: 'Kelas', options: kelas, required: true, full: true },
+      { name: 'jenis', label: 'Jenis', blank: false, default: 'SPP', options: ['SPP', 'Uang Gedung', 'Seragam', 'Kegiatan', 'Lainnya'].map((v) => ({ value: v, label: v })) },
+      { name: 'periode', label: 'Periode', type: 'month', default: today().slice(0, 7) }, { name: 'jumlah', label: 'Jumlah per siswa (Rp)', type: 'number', required: true },
+      { name: 'jatuh_tempo', label: 'Jatuh tempo', type: 'date' }], {},
+    async (d) => { const r = await api('tagihan/generate', { method: 'POST', body: d }); toast(`${r.dibuat} tagihan dibuat, ${r.dilewati} dilewati (sudah ada)`); reload(); });
+  }) }],
+  fields: [{ name: 'siswa_id', label: 'Siswa', load: optSiswa, required: true, full: true },
+    { name: 'jenis', label: 'Jenis', blank: false, default: 'SPP', options: ['SPP', 'Uang Gedung', 'Seragam', 'Kegiatan', 'Lainnya'].map((v) => ({ value: v, label: v })) },
+    { name: 'periode', label: 'Periode', type: 'month', default: today().slice(0, 7) }, { name: 'jumlah', label: 'Jumlah (Rp)', type: 'number', required: true },
+    { name: 'jatuh_tempo', label: 'Jatuh tempo', type: 'date' }, { name: 'keterangan', label: 'Keterangan' }],
+});
+pages.pengumuman = crudPage({
+  key: 'pengumuman', title: 'Pengumuman untuk Wali', single: 'Pengumuman', noExport: true,
+  note: '<p class="empty" style="text-align:left">Pengumuman tampil di aplikasi wali murid dari lembaga yang dipilih. Pilih satu lembaga saat membuat pengumuman.</p>',
+  columns: [{ key: 'tanggal', label: 'Tanggal' }, { key: 'judul', label: 'Judul' }, { label: 'Isi', render: (r) => esc(String(r.isi).slice(0, 80)) + (r.isi.length > 80 ? '…' : '') }, { key: 'dibuat_oleh', label: 'Oleh' }],
+  fields: [{ name: 'judul', label: 'Judul', required: true, full: true }, { name: 'isi', label: 'Isi pengumuman', type: 'textarea', required: true, full: true }],
+});
 const STATUS_PPDB = ['baru', 'terverifikasi', 'diterima', 'cadangan', 'ditolak'];
 const setStatus = (status) => guard(async (r, reload) => { await api('pendaftar/' + r.id, { method: 'PUT', body: { status } }); toast('Status diubah'); reload(); });
 pages.pendaftar = crudPage({
@@ -282,7 +353,7 @@ pages.dashboard = guard(async () => {
   const bars = (rows, label) => { const max = Math.max(1, ...rows.map((r) => r.jumlah)); return rows.map((r) =>
     `<div><span>${esc(label(r))}</span><i style="width:${r.jumlah / max * 100}%"></i><span>${r.jumlah}</span></div>`).join('') || '<p class="empty">Belum ada data.</p>'; };
   $('#main').innerHTML = `<h2>Dashboard</h2><div class="stats">
-    ${[['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pendaftar baru', d.pendaftar_baru], ['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)]]
+    ${[['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pendaftar baru', d.pendaftar_baru], ['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)], ['Tunggakan (lewat jatuh tempo)', rp(d.tunggakan)]]
       .map(([l, n]) => `<div class="card stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('')}</div>
     <div class="grid2"><div class="card"><b>Absensi hari ini</b><p>Hadir ${a.H || 0} · Sakit ${a.S || 0} · Izin ${a.I || 0} · Alpa ${a.A || 0}</p></div>
     ${d.multi ? `<div class="card"><b>Siswa per lembaga</b><div class="bars">${bars(d.per_lembaga, (r) => r.kode)}</div></div>` : ''}
@@ -332,7 +403,7 @@ pages.rapor = guard(async () => {
   $('#main').innerHTML = `<h2>Rapor Siswa</h2><div class="bar">
     <select id="s">${siswa.map((s) => `<option value="${s.value}">${esc(s.label)}</option>`).join('')}</select>
     <select id="sem"><option value="">Semua semester</option><option>Ganjil</option><option>Genap</option></select>
-    <button class="btn" id="raporPdf">⬇ PDF</button><button class="btn" onclick="window.print()">🖨 Cetak</button></div><div id="out"></div>`;
+    <button class="btn" id="raporPdf">⬇ PDF</button><button class="btn" id="printBtn">🖨 Cetak</button></div><div id="out"></div>`;
   const load = guard(async () => {
     if (!$('#s').value) { $('#out').innerHTML = '<div class="empty">Belum ada siswa.</div>'; return; }
     const d = await api('rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
@@ -344,6 +415,7 @@ pages.rapor = guard(async () => {
       <tr><th colspan="2">Rata-rata keseluruhan</th><th>${avg}</th></tr></tbody></table>
       <p>Kehadiran: Hadir ${a.h || 0} · Sakit ${a.s || 0} · Izin ${a.i || 0} · Alpa ${a.a || 0}</p></div>`;
   });
+  $('#printBtn').onclick = () => window.print();
   $('#raporPdf').onclick = () => $('#s').value && download('pdf/rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
   $('#s').onchange = $('#sem').onchange = load; load();
 });
@@ -362,7 +434,7 @@ pages.pengguna = guard(async () => {
         ${u.id === me.id ? '' : `<button class="btn small danger" data-a="del" data-id="${u.id}">Hapus</button>`}`}</td></tr>`).join('')}</tbody></table></div>
       <p class="empty" style="text-align:left">Kosongkan password saat mengubah jika tidak ingin menggantinya.</p>`;
     const fields = (edit) => [{ name: 'username', label: 'Username', required: true, ...(edit ? { disabled: true } : {}) }, { name: 'nama', label: 'Nama', required: true },
-      { name: 'password', label: edit ? 'Password baru (opsional)' : 'Password (min. 6)', type: 'password', required: !edit },
+      { name: 'password', label: edit ? 'Password baru (opsional)' : 'Password (min. 8)', type: 'password', required: !edit },
       { name: 'role', label: 'Peran', blank: false, options: roles.map(([value, label]) => ({ value, label })) },
       { name: 'lembaga_ids', label: 'Lembaga yang boleh diakses (tidak berlaku untuk Admin Yayasan)', type: 'checks', options: lembagaOpts }];
     const save = (row) => async (d) => {
@@ -385,7 +457,7 @@ pages.pengguna = guard(async () => {
 // ---- shell ----
 const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'];
 const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', ALL],
-  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['pengguna', 'Pengguna', ADM],
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['pengguna', 'Pengguna', ADM],
   ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']]];
 
 function route() {
@@ -395,7 +467,14 @@ function route() {
   $('#main').onclick = null; page();
 }
 function showLogin() { me = null; $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
+function forcePassword() {
+  openForm('Buat password baru (wajib)', [{ name: 'lama', label: 'Password saat ini', type: 'password', required: true, full: true },
+    { name: 'baru', label: 'Password baru (min. 8 karakter)', type: 'password', required: true, full: true }], {},
+  async (d) => { await api('password', { method: 'POST', body: d }); me.must_change = false; $('#dlg').oncancel = null; toast('Password diganti'); route(); });
+  $('#cancelBtn').classList.add('hidden'); $('#dlg').oncancel = (e) => e.preventDefault();
+}
 function showApp() {
+  if (me.role === 'wali') { location.href = '/wali'; return; }
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#nav').innerHTML = MENU.filter((m) => m[2].includes(me.role)).map(([k, l]) => `<a href="#/${k}" data-p="${k}">${l}</a>`).join('');
   $('#who').textContent = `${me.nama} (${me.role})`;
@@ -408,6 +487,7 @@ function showApp() {
     sw.value = String(scope);
   } else sw.classList.add('hidden');
   $('#lembagaName').textContent = me.lembagas.length === 1 ? me.lembagas[0].nama : '';
+  if (me.must_change) { forcePassword(); return; }
   route();
 }
 $('#loginForm').onsubmit = async (e) => {
@@ -422,7 +502,7 @@ $('#lembaga').onchange = (e) => {
 };
 $('#logoutBtn').onclick = async () => { await api('logout', { method: 'POST' }).catch(() => {}); showLogin(); };
 $('#pwBtn').onclick = () => openForm('Ganti Password', [{ name: 'lama', label: 'Password lama', type: 'password', required: true, full: true },
-  { name: 'baru', label: 'Password baru (min. 6)', type: 'password', required: true, full: true }], {},
+  { name: 'baru', label: 'Password baru (min. 8)', type: 'password', required: true, full: true }], {},
 async (d) => { await api('password', { method: 'POST', body: d }); toast('Password diganti'); });
 window.addEventListener('hashchange', () => me && route());
 api('me').then((u) => { me = u; showApp(); }).catch(showLogin);
