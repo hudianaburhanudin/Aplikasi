@@ -136,7 +136,7 @@ function crudPage(cfg) {
       const rows = await api(cfg.key + '?' + qs(params));
       const columns = multi() && cfg.scoped !== false ? [{ key: 'lembaga_kode', label: 'Lembaga' }, ...cfg.columns] : cfg.columns;
       $('#tbl').innerHTML = rows.length ? `<table><thead><tr>${columns.map((c) => `<th>${c.label}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map((r) =>
-        `<tr>${columns.map((c) => `<td>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}
+        `<tr>${columns.map((c) => `<td class="${c.render || String(r[c.key] ?? '').length <= 18 ? 'nw' : ''}">${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}
         <td class="act">${(cfg.rowActions || []).filter((a) => !a.show || a.show(r)).map((a) => `<button class="btn small" data-a="${a.name}" data-id="${r.id}">${a.label}</button>`).join(' ')}
         <button class="btn small" data-a="edit" data-id="${r.id}">Ubah</button>
         <button class="btn small danger" data-a="del" data-id="${r.id}">Hapus</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada data.</div>';
