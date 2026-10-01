@@ -9,6 +9,7 @@ Node.js (>= 22.13) + SQLite bawaan Node + frontend HTML/JS biasa.
 - **Absensi**: input harian per kelas (Hadir/Sakit/Izin/Alpa) + rekap bulanan
 - **Nilai** dan **Rapor** per siswa (rata-rata per mapel, bisa dicetak)
 - **Pembayaran**: SPP dan pembayaran lain, total otomatis
+- **Ekspor Excel (.xlsx)** untuk siswa, guru, kelas, nilai, pembayaran, dan rekap absensi (mengikuti filter yang aktif)
 - **Pengguna & login**: peran admin/staf, ganti password
 
 ## Menjalankan

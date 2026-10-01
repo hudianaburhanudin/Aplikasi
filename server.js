@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { openDb, hashPassword, verifyPassword } = require('./db');
+const { buildXlsx } = require('./xlsx');
 
 // Konfigurasi tiap resource CRUD. `a` = alias tabel utama pada query `sel`.
 const RES = {
@@ -41,6 +42,15 @@ const RES = {
     filters: { siswa_id: 'p.siswa_id', kelas_id: 's.kelas_id', bulan: 'p.bulan' },
     order: 'p.tanggal DESC, p.id DESC',
   },
+};
+// Kolom ekspor Excel: [judul, kunci]
+const EXPORTS = {
+  siswa: ['Data Siswa', [['NIS', 'nis'], ['Nama', 'nama'], ['L/P', 'jk'], ['Tanggal Lahir', 'tgl_lahir'], ['Kelas', 'kelas_nama'], ['Wali', 'wali'], ['Telepon', 'telepon'], ['Alamat', 'alamat'], ['Status', 'status']]],
+  guru: ['Data Guru', [['NIP', 'nip'], ['Nama', 'nama'], ['L/P', 'jk'], ['Mata Pelajaran', 'mapel'], ['Telepon', 'telepon'], ['Alamat', 'alamat']]],
+  kelas: ['Data Kelas', [['Kelas', 'nama'], ['Tahun Ajaran', 'tahun_ajaran'], ['Wali Kelas', 'wali_nama'], ['Jumlah Siswa', 'jumlah']]],
+  nilai: ['Nilai Siswa', [['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Mapel', 'mapel'], ['Jenis', 'jenis'], ['Nilai', 'nilai'], ['Semester', 'semester']]],
+  pembayaran: ['Pembayaran', [['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Jenis', 'jenis'], ['Periode', 'bulan'], ['Jumlah (Rp)', 'jumlah'], ['Keterangan', 'keterangan']]],
+  'rekap-absensi': ['Rekap Absensi', [['NIS', 'nis'], ['Nama', 'nama'], ['Hadir', 'h'], ['Sakit', 's'], ['Izin', 'i'], ['Alpa', 'a']]],
 };
 const NUMERIC = new Set(['nilai', 'jumlah']);
 const ABSEN = new Set(['H', 'S', 'I', 'A']);
@@ -279,6 +289,17 @@ function createApp(dbFile) {
       if (String(baru || '').length < 6) throw new HttpError(400, 'Password baru minimal 6 karakter');
       db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(String(baru)), me.id);
       return send(res, 200, { ok: true });
+    }
+    if (name === 'export' && method === 'GET') {
+      const key = parts[1], ex = EXPORTS[key];
+      if (!ex) throw new HttpError(404, 'Data ekspor tidak ditemukan');
+      const data = key === 'rekap-absensi' ? rekapAbsensi(q) : list(RES[key], q);
+      const buf = buildXlsx(ex[0], ex[1].map((c) => c[0]), data.map((r) => ex[1].map((c) => r[c[1]] ?? (key === 'rekap-absensi' ? 0 : ''))));
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${key}-${new Date().toISOString().slice(0, 10)}.xlsx"`,
+      });
+      return res.end(buf);
     }
     if (name === 'dashboard') return send(res, 200, dashboard());
     if (name === 'rapor') return send(res, 200, rapor(q));

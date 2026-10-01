@@ -48,3 +48,21 @@ test('alur utama aplikasi sekolah', async (t) => {
   assert.strictEqual((await call('logout', 'POST')).status, 200);
   assert.strictEqual((await call('siswa')).status, 401);
 });
+
+test('ekspor Excel menghasilkan file xlsx', async (t) => {
+  const { server } = createApp(':memory:');
+  await new Promise((r) => server.listen(0, r));
+  t.after(() => server.close());
+  const base = `http://localhost:${server.address().port}/api/`;
+  const login = await fetch(base + 'login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'admin123' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const h = { 'Content-Type': 'application/json', cookie };
+  await fetch(base + 'siswa', { method: 'POST', headers: h, body: JSON.stringify({ nama: 'Andi & <Budi>', nis: '1' }) });
+  assert.strictEqual((await fetch(base + 'export/siswa')).status, 401);
+  const r = await fetch(base + 'export/siswa', { headers: { cookie } });
+  assert.strictEqual(r.status, 200);
+  assert.match(r.headers.get('content-disposition'), /siswa-\d{4}-\d{2}-\d{2}\.xlsx/);
+  const buf = Buffer.from(await r.arrayBuffer());
+  assert.strictEqual(buf.subarray(0, 2).toString(), 'PK');
+  assert.strictEqual((await fetch(base + 'export/tidakada', { headers: { cookie } })).status, 404);
+});

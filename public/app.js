@@ -18,6 +18,17 @@ async function api(path, opt = {}) {
 }
 const qs = (o) => new URLSearchParams(Object.fromEntries(Object.entries(o).filter(([, v]) => v))).toString();
 
+async function downloadXlsx(path) {
+  try {
+    const r = await fetch('/api/export/' + path);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Gagal mengekspor');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob());
+    a.download = /filename="(.+?)"/.exec(r.headers.get('content-disposition') || '')?.[1] || 'data.xlsx';
+    a.click(); URL.revokeObjectURL(a.href);
+  } catch (e) { toast(e.message, true); }
+}
+
 function toast(msg, err) {
   const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (err ? ' err' : '');
   clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3000);
@@ -61,7 +72,7 @@ function crudPage(cfg) {
     main.innerHTML = `<h2>${cfg.title}</h2><div class="bar">
       <input id="q" placeholder="Cari…" type="search">
       ${filters.map((f) => `<select data-f="${f.key}"><option value="">${f.label}</option>${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select>`).join('')}
-      <span class="grow"></span><button class="btn primary" id="add">+ Tambah</button></div>
+      <span class="grow"></span><button class="btn" id="xls">⬇ Excel</button><button class="btn primary" id="add">+ Tambah</button></div>
       <div class="tablewrap" id="tbl"></div><p id="foot" class="empty" style="text-align:left"></p>`;
     const load = guard(async () => {
       const params = { q: $('#q').value };
@@ -92,6 +103,11 @@ function crudPage(cfg) {
       });
     });
     $('#add').onclick = () => form();
+    $('#xls').onclick = () => {
+      const params = { q: $('#q').value };
+      main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
+      downloadXlsx(cfg.key + '?' + qs(params));
+    };
     $('#q').oninput = (() => { let t; return () => { clearTimeout(t); t = setTimeout(load, 250); }; })();
     main.querySelectorAll('[data-f]').forEach((s) => { s.onchange = load; });
     load();
@@ -174,7 +190,7 @@ pages.absensi = guard(async () => {
     <input type="date" id="t" value="${today()}"><button class="btn" id="allH">Semua hadir</button>
     <span class="grow"></span><button class="btn primary" id="save">Simpan absensi</button></div>
     <div class="tablewrap" id="tbl"></div>
-    <h2 style="margin-top:24px">Rekap bulanan</h2><div class="bar"><input type="month" id="bln" value="${today().slice(0, 7)}"></div>
+    <h2 style="margin-top:24px">Rekap bulanan</h2><div class="bar"><input type="month" id="bln" value="${today().slice(0, 7)}"><button class="btn" id="xlsRekap">⬇ Excel</button></div>
     <div class="tablewrap" id="rekap"></div>`;
   const load = guard(async () => {
     if (!$('#k').value) { $('#tbl').innerHTML = '<div class="empty">Buat kelas terlebih dahulu.</div>'; return; }
@@ -191,6 +207,7 @@ pages.absensi = guard(async () => {
       `<tr><td>${esc(r.nama)}</td><td>${r.h || 0}</td><td>${r.s || 0}</td><td>${r.i || 0}</td><td>${r.a || 0}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Tidak ada data.</div>';
   });
   $('#k').onchange = $('#t').onchange = load; $('#bln').onchange = rekap;
+  $('#xlsRekap').onclick = () => downloadXlsx('rekap-absensi?' + qs({ kelas_id: $('#k').value, bulan: $('#bln').value }));
   $('#allH').onclick = () => document.querySelectorAll('input[value="H"]').forEach((i) => { i.checked = true; });
   $('#save').onclick = guard(async () => {
     const items = [...document.querySelectorAll('#tbl input:checked')].map((i) => ({ siswa_id: Number(i.name.slice(1)), status: i.value }));
