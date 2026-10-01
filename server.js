@@ -15,7 +15,7 @@ const todayWib = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 
 const LJ = 'LEFT JOIN lembaga l ON l.id = ';
 const RES = {
   lembaga: {
-    a: 'l', table: 'lembaga', cols: ['kode', 'nama', 'jenjang', 'alamat', 'telepon'], req: ['kode', 'nama'],
+    a: 'l', table: 'lembaga', cols: ['kode', 'nama', 'jenjang', 'alamat', 'telepon', 'ppdb_buka'], req: ['kode', 'nama'],
     sel: 'SELECT l.* FROM lembaga l', search: ['l.nama', 'l.kode'], filters: {}, order: 'l.id',
     scopeCol: 'l.id', scopeKey: 'id', writeRole: 'yayasan',
   },
@@ -31,16 +31,25 @@ const RES = {
     search: ['k.nama'], filters: { tahun_ajaran: 'k.tahun_ajaran' }, order: 'l.id, k.nama', scopeCol: 'k.lembaga_id', scopeKey: 'lembaga_id',
   },
   guru: {
-    a: 'g', table: 'guru', cols: ['nip', 'nama', 'jk', 'mapel', 'telepon', 'alamat'], req: ['nama'], own: true,
+    a: 'g', table: 'guru', cols: ['nip', 'nama', 'jk', 'mapel', 'telepon', 'alamat'], req: ['nama'], own: true, enums: { jk: ['L', 'P'] },
     sel: `SELECT g.*, l.kode lembaga_kode FROM guru g ${LJ}g.lembaga_id`,
     search: ['g.nama', 'g.nip', 'g.mapel'], filters: {}, order: 'l.id, g.nama', scopeCol: 'g.lembaga_id', scopeKey: 'lembaga_id',
   },
   siswa: {
     a: 's', table: 'siswa', own: true,
-    cols: ['nis', 'nama', 'jk', 'tgl_lahir', 'kelas_id', 'wali', 'telepon', 'alamat', 'status'], req: ['nama'],
+    cols: ['nis', 'nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'kelas_id', 'wali', 'telepon', 'alamat', 'status', 'tahun_masuk', 'tahun_lulus'], req: ['nama'],
+    enums: { jk: ['L', 'P'], status: ['aktif', 'lulus', 'pindah', 'keluar'] },
     sel: `SELECT s.*, l.kode lembaga_kode, k.nama kelas_nama FROM siswa s ${LJ}s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id`,
     search: ['s.nama', 's.nis'], filters: { kelas_id: 's.kelas_id', status: 's.status' }, order: 'l.id, s.nama',
     scopeCol: 's.lembaga_id', scopeKey: 'lembaga_id',
+  },
+  pendaftar: {
+    a: 'd', table: 'pendaftar', own: true,
+    cols: ['nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'alamat', 'nama_ayah', 'nama_ibu', 'telepon', 'asal_sekolah', 'status', 'catatan'], req: ['nama'],
+    enums: { jk: ['L', 'P'], status: ['baru', 'terverifikasi', 'diterima', 'cadangan', 'ditolak'] },
+    sel: `SELECT d.*, l.kode lembaga_kode FROM pendaftar d ${LJ}d.lembaga_id`,
+    search: ['d.nama', 'd.no_daftar', 'd.telepon'], filters: { status: 'd.status', tahun_ajaran: 'd.tahun_ajaran' },
+    order: 'd.id DESC', scopeCol: 'd.lembaga_id', scopeKey: 'lembaga_id',
   },
   nilai: {
     a: 'n', table: 'nilai', cols: ['siswa_id', 'mapel', 'jenis', 'nilai', 'semester', 'tanggal'], req: ['siswa_id', 'mapel', 'nilai'],
@@ -65,9 +74,13 @@ const EXPORTS = {
   kelas: ['Data Kelas', [['Lembaga', 'lembaga_kode'], ['Kelas', 'nama'], ['Tahun Ajaran', 'tahun_ajaran'], ['Wali Kelas', 'wali_nama'], ['Jumlah Siswa', 'jumlah']]],
   nilai: ['Nilai Siswa', [['Lembaga', 'lembaga_kode'], ['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Mapel', 'mapel'], ['Jenis', 'jenis'], ['Nilai', 'nilai'], ['Semester', 'semester']]],
   pembayaran: ['Pembayaran', [['Lembaga', 'lembaga_kode'], ['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Jenis', 'jenis'], ['Periode', 'bulan'], ['Jumlah (Rp)', 'jumlah'], ['Keterangan', 'keterangan']]],
+  pendaftar: ['Data Pendaftar', [['Lembaga', 'lembaga_kode'], ['No. Daftar', 'no_daftar'], ['Nama', 'nama'], ['L/P', 'jk'], ['Tgl Lahir', 'tgl_lahir'], ['Asal Sekolah', 'asal_sekolah'], ['Telepon', 'telepon'], ['Status', 'status']]],
   'rekap-absensi': ['Rekap Absensi', [['NIS', 'nis'], ['Nama', 'nama'], ['Hadir', 'h'], ['Sakit', 's'], ['Izin', 'i'], ['Alpa', 'a']]],
 };
-const NUMERIC = new Set(['nilai', 'jumlah', 'aktif']);
+const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka']);
+const KENAIKAN = ['naik', 'lulus', 'pindah', 'keluar'];
+const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
+const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
 const ABSEN = new Set(['H', 'S', 'I', 'A']);
 const ROLES = ['yayasan', 'admin', 'staf'];
 const ph = (a) => a.map(() => '?').join(',');
@@ -80,6 +93,17 @@ function createApp(dbFile) {
   const db = openDb(dbFile);
   const sessions = new Map(); // token -> {userId, exp}
   const attempts = new Map(); // ip -> {n, until}
+  const buckets = new Map(); // "nama:ip" -> {n, reset}
+  // Di belakang reverse proxy set TRUST_PROXY=1 agar IP asli dibaca dari X-Forwarded-For.
+  const clientIp = (req) => (process.env.TRUST_PROXY ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '') || req.socket.remoteAddress;
+  const limited = (name, req, max, ms) => {
+    const k = name + ':' + clientIp(req), now = Date.now();
+    let b = buckets.get(k);
+    if (!b || b.reset < now) { b = { n: 0, reset: now + ms }; buckets.set(k, b); }
+    if (buckets.size > 5000) for (const [kk, v] of buckets) if (v.reset < now) buckets.delete(kk);
+    return ++b.n > max;
+  };
+  const activeTahun = () => (db.prepare('SELECT nama FROM tahun_ajaran WHERE aktif = 1').get() || {}).nama;
   const PUBLIC_DIR = path.join(__dirname, 'public');
   const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
@@ -129,6 +153,7 @@ function createApp(dbFile) {
         v = Number(v);
         if (!Number.isFinite(v)) throw new HttpError(400, `Nilai "${c}" harus berupa angka`);
       }
+      if (v !== null && cfg.enums && cfg.enums[c] && !cfg.enums[c].includes(v)) throw new HttpError(400, `Nilai "${c}" tidak valid`);
       out[c] = v;
     }
     for (const r of cfg.req) {
@@ -145,6 +170,120 @@ function createApp(dbFile) {
       const sl = lembagaOf('siswa', d.siswa_id, ctx);
       if (lembagaId != null && sl !== lembagaId) throw new HttpError(400, 'Siswa berasal dari lembaga lain');
     }
+  }
+
+  // ---- PPDB ----
+  function fillPendaftar(d, lid, sumber) {
+    const ta = activeTahun();
+    if (!ta) throw new HttpError(400, 'Belum ada tahun ajaran aktif');
+    const l = db.prepare('SELECT kode FROM lembaga WHERE id = ?').get(lid);
+    const urut = db.prepare('SELECT COALESCE(MAX(urut), 0) + 1 n FROM pendaftar WHERE lembaga_id = ? AND tahun_ajaran = ?').get(lid, ta).n;
+    Object.assign(d, { tahun_ajaran: ta, urut, no_daftar: `${l.kode}-${ta.slice(0, 4)}-${String(urut).padStart(4, '0')}`, sumber, status: d.status || 'baru' });
+  }
+
+  function terimaPendaftar(id, body, ctx) {
+    const row = getRow(RES.pendaftar, id, ctx);
+    if (row.siswa_id) throw new HttpError(400, 'Pendaftar ini sudah menjadi siswa');
+    if (row.status !== 'diterima') throw new HttpError(400, 'Hanya pendaftar berstatus "diterima" yang dapat dijadikan siswa');
+    const kid = body.kelas_id ? Number(body.kelas_id) : null;
+    if (kid && lembagaOf('kelas', kid, ctx) !== row.lembaga_id) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
+    db.exec('BEGIN');
+    try {
+      const r = db.prepare(`INSERT INTO siswa (lembaga_id, nis, nama, jk, tempat_lahir, tgl_lahir, nik, alamat, wali, telepon, status, kelas_id, tahun_masuk)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'aktif',?,?)`).run(row.lembaga_id, str(body.nis, 30), row.nama, row.jk, row.tempat_lahir, row.tgl_lahir, row.nik,
+        row.alamat, row.nama_ayah || row.nama_ibu, row.telepon, kid, row.tahun_ajaran);
+      const sid = Number(r.lastInsertRowid);
+      db.prepare("INSERT INTO mutasi (siswa_id, jenis, ke_kelas_id, tahun_ajaran, tanggal) VALUES (?, 'masuk', ?, ?, ?)").run(sid, kid, row.tahun_ajaran, todayWib());
+      db.prepare("UPDATE pendaftar SET status = 'terdaftar', siswa_id = ? WHERE id = ?").run(sid, id);
+      db.exec('COMMIT');
+      return { siswa_id: sid };
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
+
+  // Kenaikan kelas, kelulusan, pindah, keluar - massal dan atomik, dengan riwayat.
+  function kenaikan(body, ctx) {
+    const ids = [...new Set((Array.isArray(body.siswa_ids) ? body.siswa_ids : []).map(Number))];
+    if (!ids.length || ids.length > 2000) throw new HttpError(400, 'Pilih siswa (maksimal 2000)');
+    const aksi = body.aksi;
+    if (!KENAIKAN.includes(aksi)) throw new HttpError(400, 'Aksi tidak valid');
+    let ke = null;
+    if (aksi === 'naik') {
+      ke = db.prepare('SELECT * FROM kelas WHERE id = ?').get(Number(body.ke_kelas_id));
+      if (!ke || !ctx.scope.ids.includes(ke.lembaga_id)) throw new HttpError(404, 'Kelas tujuan tidak ditemukan');
+    }
+    const tanggal = body.tanggal && isDate(body.tanggal) ? body.tanggal : todayWib();
+    const tahunLulus = str(body.tahun_ajaran, 20) || activeTahun() || null;
+    const ket = str(body.keterangan, 200);
+    db.exec('BEGIN');
+    try {
+      for (const id of ids) {
+        const s = db.prepare('SELECT * FROM siswa WHERE id = ?').get(id);
+        if (!s || !ctx.scope.ids.includes(s.lembaga_id)) throw new HttpError(404, 'Siswa tidak ditemukan');
+        if (s.status !== 'aktif') throw new HttpError(400, `${s.nama} bukan siswa aktif`);
+        if (aksi === 'naik') {
+          if (ke.lembaga_id !== s.lembaga_id) throw new HttpError(400, `Kelas tujuan berasal dari lembaga lain (${s.nama})`);
+          if (ke.id === s.kelas_id) throw new HttpError(400, `Kelas tujuan sama dengan kelas asal (${s.nama})`);
+          db.prepare('UPDATE siswa SET kelas_id = ? WHERE id = ?').run(ke.id, id);
+        } else if (aksi === 'lulus') {
+          db.prepare("UPDATE siswa SET status = 'lulus', tahun_lulus = ? WHERE id = ?").run(tahunLulus, id);
+        } else {
+          db.prepare('UPDATE siswa SET status = ? WHERE id = ?').run(aksi, id);
+        }
+        db.prepare('INSERT INTO mutasi (siswa_id, jenis, dari_kelas_id, ke_kelas_id, tahun_ajaran, tanggal, keterangan) VALUES (?,?,?,?,?,?,?)')
+          .run(id, aksi, s.kelas_id, ke ? ke.id : null, ke ? ke.tahun_ajaran : tahunLulus, tanggal, ket);
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { ok: true, jumlah: ids.length };
+  }
+
+  function riwayat(q, ctx) {
+    if (!q.siswa_id) throw new HttpError(400, 'siswa_id wajib diisi');
+    lembagaOf('siswa', Number(q.siswa_id), ctx);
+    return db.prepare(`SELECT m.*, kd.nama dari_kelas, kk.nama ke_kelas FROM mutasi m
+      LEFT JOIN kelas kd ON kd.id = m.dari_kelas_id LEFT JOIN kelas kk ON kk.id = m.ke_kelas_id
+      WHERE m.siswa_id = ? ORDER BY m.id`).all(q.siswa_id);
+  }
+
+  // Endpoint publik (tanpa login) untuk pendaftaran online
+  async function publicApi(req, res, parts) {
+    const [, what] = parts, method = req.method;
+    if (what === 'lembaga' && method === 'GET') {
+      return send(res, 200, { tahun_ajaran: activeTahun() || null,
+        lembaga: db.prepare('SELECT id, kode, nama, jenjang FROM lembaga WHERE ppdb_buka = 1 ORDER BY id').all() });
+    }
+    if (what === 'daftar' && method === 'POST') {
+      if (limited('daftar', req, 60, 3600e3)) throw new HttpError(429, 'Terlalu banyak pendaftaran dari perangkat ini, coba lagi nanti');
+      const b = await readBody(req);
+      if (b.website) return send(res, 200, { no_daftar: 'OK' }); // honeypot: bot mengisi kolom tersembunyi
+      const l = db.prepare('SELECT * FROM lembaga WHERE id = ? AND ppdb_buka = 1').get(Number(b.lembaga_id));
+      if (!l) throw new HttpError(400, 'Pendaftaran untuk lembaga ini sedang ditutup');
+      const d = { nama: str(b.nama, 100), jk: str(b.jk, 1), tempat_lahir: str(b.tempat_lahir, 60), tgl_lahir: str(b.tgl_lahir, 10), nik: str(b.nik, 20),
+        alamat: str(b.alamat, 300), nama_ayah: str(b.nama_ayah, 100), nama_ibu: str(b.nama_ibu, 100), telepon: str(b.telepon, 20), asal_sekolah: str(b.asal_sekolah, 100) };
+      if (!d.nama) throw new HttpError(400, 'Nama calon siswa wajib diisi');
+      if (!['L', 'P'].includes(d.jk)) throw new HttpError(400, 'Jenis kelamin wajib dipilih');
+      if (!d.tgl_lahir || !isDate(d.tgl_lahir)) throw new HttpError(400, 'Tanggal lahir tidak valid');
+      if (!d.telepon) throw new HttpError(400, 'Nomor telepon/WhatsApp wajib diisi');
+      if (!d.nama_ayah && !d.nama_ibu) throw new HttpError(400, 'Nama ayah atau ibu wajib diisi');
+      d.lembaga_id = l.id;
+      const ta = activeTahun();
+      if (ta && db.prepare('SELECT 1 FROM pendaftar WHERE lembaga_id = ? AND tahun_ajaran = ? AND lower(nama) = lower(?) AND tgl_lahir = ?').get(l.id, ta, d.nama, d.tgl_lahir)) {
+        throw new HttpError(409, 'Calon siswa ini sudah terdaftar. Gunakan menu cek status.');
+      }
+      fillPendaftar(d, l.id, 'online');
+      const keys = Object.keys(d);
+      db.prepare(`INSERT INTO pendaftar (${keys.join(',')}) VALUES (${ph(keys)})`).run(...keys.map((k) => d[k]));
+      return send(res, 200, { no_daftar: d.no_daftar, nama: d.nama, lembaga: l.nama });
+    }
+    if (what === 'status' && method === 'POST') {
+      if (limited('status', req, 30, 3600e3)) throw new HttpError(429, 'Terlalu banyak percobaan, coba lagi nanti');
+      const b = await readBody(req);
+      const r = db.prepare(`SELECT d.no_daftar, d.nama, d.status, l.nama lembaga FROM pendaftar d JOIN lembaga l ON l.id = d.lembaga_id
+        WHERE d.no_daftar = ? AND d.tgl_lahir = ?`).get(String(b.no_daftar || '').trim().toUpperCase(), String(b.tgl_lahir || ''));
+      if (!r) throw new HttpError(404, 'Data tidak ditemukan. Periksa nomor pendaftaran dan tanggal lahir.');
+      return send(res, 200, r);
+    }
+    throw new HttpError(404, 'Endpoint tidak ditemukan');
   }
 
   function list(cfg, q, ctx) {
@@ -178,6 +317,7 @@ function createApp(dbFile) {
         d.lembaga_id = lid;
       }
       checkRefs(cfg, d, lid, ctx);
+      if (cfg.table === 'pendaftar') fillPendaftar(d, lid, 'admin');
       const keys = Object.keys(d);
       const r = db.prepare(`INSERT INTO ${cfg.table} (${keys.join(',')}) VALUES (${ph(keys)})`).run(...keys.map((k) => d[k]));
       const newId = Number(r.lastInsertRowid);
@@ -190,6 +330,7 @@ function createApp(dbFile) {
       const keys = Object.keys(d);
       if (!keys.length) throw new HttpError(400, 'Tidak ada data untuk diubah');
       checkRefs(cfg, d, cfg.scopeKey ? row[cfg.scopeKey] : null, ctx);
+      if (cfg.table === 'pendaftar' && row.siswa_id && 'status' in d) throw new HttpError(400, 'Pendaftar sudah menjadi siswa, status tidak dapat diubah');
       db.prepare(`UPDATE ${cfg.table} SET ${keys.map((k) => k + ' = ?').join(',')} WHERE id = ?`).run(...keys.map((k) => d[k]), id);
       if (cfg.table === 'tahun_ajaran' && d.aktif === 1) db.prepare('UPDATE tahun_ajaran SET aktif = 0 WHERE id != ?').run(id);
       return { ok: true };
@@ -247,6 +388,7 @@ function createApp(dbFile) {
       siswa: n(`SELECT COUNT(*) n FROM siswa WHERE status = 'aktif' AND lembaga_id IN (${p})`, ...ids),
       guru: n(`SELECT COUNT(*) n FROM guru WHERE lembaga_id IN (${p})`, ...ids),
       kelas: n(`SELECT COUNT(*) n FROM kelas WHERE lembaga_id IN (${p})`, ...ids),
+      pendaftar_baru: n(`SELECT COUNT(*) n FROM pendaftar WHERE status = 'baru' AND lembaga_id IN (${p})`, ...ids),
       absensi_hari_ini: abs,
       pembayaran_bulan_ini: n(`SELECT COALESCE(SUM(p.jumlah), 0) n FROM pembayaran p JOIN siswa s ON s.id = p.siswa_id
         WHERE substr(p.tanggal, 1, 7) = ? AND s.lembaga_id IN (${p})`, bulan, ...ids),
@@ -378,7 +520,7 @@ function createApp(dbFile) {
     const method = req.method;
 
     if (name === 'login' && method === 'POST') {
-      const ip = req.socket.remoteAddress;
+      const ip = clientIp(req);
       const at = attempts.get(ip);
       if (at && at.n >= 5 && at.until > Date.now()) throw new HttpError(429, 'Terlalu banyak percobaan, coba lagi nanti');
       const { username, password } = await readBody(req);
@@ -392,6 +534,8 @@ function createApp(dbFile) {
       sessions.set(token, { userId: u.id, exp: Date.now() + 12 * 3600e3 });
       return send(res, 200, publicUser(u), { 'Set-Cookie': `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200` });
     }
+
+    if (name === 'public') return publicApi(req, res, parts);
 
     const sess = getSession(req);
     if (!sess) throw new HttpError(401, 'Silakan login terlebih dahulu');
@@ -436,6 +580,9 @@ function createApp(dbFile) {
       return file(tablePdf({ title: ex[0], subtitle: sub, headers: cols.map((i) => ex[1][i][0]), rows: rows.map((r) => cols.map((i) => r[i])), footer: total }),
         'application/pdf', `${key}-${today}.pdf`);
     }
+    if (name === 'pendaftar' && parts[2] === 'terima' && method === 'POST') return send(res, 200, terimaPendaftar(id, await readBody(req), ctx));
+    if (name === 'kenaikan' && method === 'POST') return send(res, 200, kenaikan(await readBody(req), ctx));
+    if (name === 'riwayat') return send(res, 200, riwayat(q, ctx));
     if (name === 'dashboard') return send(res, 200, dashboard(ctx));
     if (name === 'rapor') return send(res, 200, rapor(q, ctx));
     if (name === 'rekap-absensi') return send(res, 200, rekapAbsensi(q, ctx));
@@ -452,7 +599,7 @@ function createApp(dbFile) {
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname.startsWith('/api/')) return await api(req, res, url);
-      const rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
+      const rel = url.pathname === '/' ? 'index.html' : url.pathname === '/daftar' ? 'daftar.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
       const file = path.join(PUBLIC_DIR, rel);
       if (!file.startsWith(PUBLIC_DIR + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
         res.writeHead(404); return res.end('Tidak ditemukan');

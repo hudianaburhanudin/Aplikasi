@@ -27,6 +27,37 @@ const LEMBAGA = [
   ['MADIN-WUSTHO', 'Madin Wustho Miftahul Ulum', 'Madin'],
 ];
 
+// Migrasi skema berversi (PRAGMA user_version). Skema dasar = versi 1; MIGRATIONS[i] membawa ke versi i + 2.
+const MIGRATIONS = [
+  `ALTER TABLE lembaga ADD COLUMN ppdb_buka INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE siswa ADD COLUMN tempat_lahir TEXT;
+   ALTER TABLE siswa ADD COLUMN nik TEXT;
+   ALTER TABLE siswa ADD COLUMN tahun_masuk TEXT;
+   ALTER TABLE siswa ADD COLUMN tahun_lulus TEXT;
+   CREATE TABLE pendaftar (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id), tahun_ajaran TEXT NOT NULL,
+     urut INTEGER NOT NULL, no_daftar TEXT NOT NULL UNIQUE, nama TEXT NOT NULL, jk TEXT, tempat_lahir TEXT,
+     tgl_lahir TEXT, nik TEXT, alamat TEXT, nama_ayah TEXT, nama_ibu TEXT, telepon TEXT, asal_sekolah TEXT,
+     status TEXT NOT NULL DEFAULT 'baru', catatan TEXT, siswa_id INTEGER REFERENCES siswa(id) ON DELETE SET NULL,
+     sumber TEXT NOT NULL DEFAULT 'admin', dibuat TEXT NOT NULL DEFAULT (datetime('now')),
+     UNIQUE (lembaga_id, tahun_ajaran, urut));
+   CREATE INDEX idx_pendaftar_lembaga ON pendaftar(lembaga_id, status);
+   CREATE TABLE mutasi (
+     id INTEGER PRIMARY KEY, siswa_id INTEGER NOT NULL REFERENCES siswa(id) ON DELETE CASCADE,
+     jenis TEXT NOT NULL, dari_kelas_id INTEGER REFERENCES kelas(id) ON DELETE SET NULL,
+     ke_kelas_id INTEGER REFERENCES kelas(id) ON DELETE SET NULL, tahun_ajaran TEXT, tanggal TEXT NOT NULL, keterangan TEXT);
+   CREATE INDEX idx_mutasi_siswa ON mutasi(siswa_id);`,
+];
+
+function migrate(db) {
+  let v = db.prepare('PRAGMA user_version').get().user_version || 1;
+  for (; v - 1 < MIGRATIONS.length; v++) {
+    db.exec('BEGIN');
+    try { db.exec(MIGRATIONS[v - 1]); db.exec(`PRAGMA user_version = ${v + 1}`); db.exec('COMMIT'); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
+}
+
 function openDb(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
@@ -73,6 +104,7 @@ function openDb(file) {
     CREATE INDEX IF NOT EXISTS idx_guru_lembaga ON guru(lembaga_id);
     CREATE INDEX IF NOT EXISTS idx_absensi_tgl ON absensi(tanggal);
   `);
+  migrate(db);
   if (!db.prepare('SELECT 1 FROM lembaga LIMIT 1').get()) {
     const ins = db.prepare('INSERT INTO lembaga (kode, nama, jenjang) VALUES (?,?,?)');
     for (const l of LEMBAGA) ins.run(...l);

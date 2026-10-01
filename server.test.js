@@ -142,3 +142,84 @@ test('isolasi data antar lembaga dan peran', async (t) => {
   // lembaga yang masih punya data tidak bisa dihapus
   assert.strictEqual((await yys(`lembaga/${SMP}`, 'DELETE')).status, 400);
 });
+
+test('PPDB online sampai kelulusan', async (t) => {
+  const { client } = await boot(t);
+  const pub = client(), yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [SMP, MI] = [id('SMP'), id('MI')];
+  const form = { lembaga_id: SMP, nama: 'Calon Siswa', jk: 'L', tgl_lahir: '2014-05-10', telepon: '08123', nama_ayah: 'Pak Calon', asal_sekolah: 'SD 1' };
+
+  // pendaftaran ditutup secara default
+  assert.deepStrictEqual((await pub('public/lembaga')).data.lembaga, []);
+  assert.strictEqual((await pub('public/daftar', 'POST', form)).status, 400);
+  assert.strictEqual((await yys(`lembaga/${SMP}`, 'PUT', { ppdb_buka: 1 })).status, 200);
+  assert.strictEqual((await yys(`lembaga/${MI}`, 'PUT', { ppdb_buka: 1 })).status, 200);
+  const pl = (await pub('public/lembaga')).data;
+  assert.strictEqual(pl.lembaga.length, 2);
+  assert.strictEqual(pl.tahun_ajaran, '2026/2027');
+
+  // validasi & anti-spam
+  for (const bad of [{ nama: '' }, { jk: 'X' }, { tgl_lahir: '31-12-2014' }, { telepon: '' }, { nama_ayah: '' }]) {
+    assert.strictEqual((await pub('public/daftar', 'POST', { ...form, ...bad })).status, 400, JSON.stringify(bad));
+  }
+  assert.strictEqual((await pub('public/daftar', 'POST', { ...form, website: 'spam.com' })).data.no_daftar, 'OK'); // honeypot
+  assert.strictEqual((await yys('pendaftar', 'GET', null, SMP)).data.length, 0);
+
+  const reg = (await pub('public/daftar', 'POST', form)).data;
+  assert.strictEqual(reg.no_daftar, 'SMP-2026-0001');
+  assert.strictEqual((await pub('public/daftar', 'POST', form)).status, 409); // ganda
+  assert.strictEqual((await pub('public/daftar', 'POST', { ...form, nama: 'Kedua' })).data.no_daftar, 'SMP-2026-0002');
+  assert.strictEqual((await pub('public/daftar', 'POST', { ...form, lembaga_id: MI })).data.no_daftar, 'MI-2026-0001');
+
+  // cek status publik harus cocok nomor + tanggal lahir
+  assert.strictEqual((await pub('public/status', 'POST', { no_daftar: reg.no_daftar, tgl_lahir: '2014-05-10' })).data.status, 'baru');
+  assert.strictEqual((await pub('public/status', 'POST', { no_daftar: reg.no_daftar, tgl_lahir: '2000-01-01' })).status, 404);
+  assert.strictEqual((await pub('pendaftar')).status, 401); // data pendaftar tidak publik
+
+  // admin: seleksi
+  const list = (await yys('pendaftar', 'GET', null, SMP)).data;
+  assert.strictEqual(list.length, 2);
+  const pid = list.find((x) => x.no_daftar === 'SMP-2026-0001').id;
+  assert.strictEqual((await yys(`pendaftar/${pid}`, 'PUT', { status: 'terdaftar' })).status, 400); // tidak bisa diset manual
+  const kelas7 = (await yys('kelas', 'POST', { nama: 'VII-A', tahun_ajaran: '2026/2027' }, SMP)).data.id;
+  const kelas8 = (await yys('kelas', 'POST', { nama: 'VIII-A', tahun_ajaran: '2027/2028' }, SMP)).data.id;
+  const kelasMI = (await yys('kelas', 'POST', { nama: 'I-A' }, MI)).data.id;
+  assert.strictEqual((await yys(`pendaftar/${pid}/terima`, 'POST', { kelas_id: kelas7 })).status, 400); // belum diterima
+  await yys(`pendaftar/${pid}`, 'PUT', { status: 'diterima' });
+  assert.strictEqual((await yys(`pendaftar/${pid}/terima`, 'POST', { kelas_id: kelasMI })).status, 400); // kelas lembaga lain
+  const sid = (await yys(`pendaftar/${pid}/terima`, 'POST', { kelas_id: kelas7, nis: '2026001' })).data.siswa_id;
+  assert.strictEqual((await yys(`pendaftar/${pid}/terima`, 'POST', { kelas_id: kelas7 })).status, 400); // sudah jadi siswa
+  assert.strictEqual((await yys(`pendaftar/${pid}`, 'PUT', { status: 'baru' })).status, 400);
+  const s = (await yys(`siswa/${sid}`)).data;
+  assert.deepStrictEqual([s.nama, s.nis, s.kelas_id, s.status, s.tahun_masuk, s.wali], ['Calon Siswa', '2026001', kelas7, 'aktif', '2026/2027', 'Pak Calon']);
+  assert.strictEqual((await yys('pendaftar/' + pid)).data.status, 'terdaftar');
+
+  // kenaikan kelas
+  assert.strictEqual((await yys('kenaikan', 'POST', { siswa_ids: [sid], aksi: 'naik', ke_kelas_id: kelasMI })).status, 400); // lintas lembaga
+  assert.strictEqual((await yys('kenaikan', 'POST', { siswa_ids: [sid], aksi: 'naik', ke_kelas_id: kelas7 })).status, 400); // sama
+  assert.strictEqual((await yys('kenaikan', 'POST', { siswa_ids: [sid], aksi: 'hapus' })).status, 400);
+  assert.strictEqual((await yys('kenaikan', 'POST', { siswa_ids: [sid], aksi: 'naik', ke_kelas_id: kelas8 })).status, 200);
+  assert.strictEqual((await yys(`siswa/${sid}`)).data.kelas_id, kelas8);
+  // gagal sebagian = tidak ada perubahan (atomik)
+  const s2 = (await yys('siswa', 'POST', { nama: 'Lain', kelas_id: kelas7 }, SMP)).data.id;
+  assert.strictEqual((await yys('kenaikan', 'POST', { siswa_ids: [s2, sid], aksi: 'naik', ke_kelas_id: kelas8 })).status, 400); // sid sudah di kelas8
+  assert.strictEqual((await yys(`siswa/${s2}`)).data.kelas_id, kelas7);
+  // kelulusan
+  assert.strictEqual((await yys('kenaikan', 'POST', { siswa_ids: [sid], aksi: 'lulus', tahun_ajaran: '2028/2029' })).status, 200);
+  const alum = (await yys(`siswa/${sid}`)).data;
+  assert.deepStrictEqual([alum.status, alum.tahun_lulus], ['lulus', '2028/2029']);
+  assert.strictEqual((await yys('kenaikan', 'POST', { siswa_ids: [sid], aksi: 'lulus' })).status, 400); // bukan siswa aktif
+  assert.deepStrictEqual((await yys(`riwayat?siswa_id=${sid}`)).data.map((m) => m.jenis), ['masuk', 'naik', 'lulus']);
+
+  // isolasi: admin MI tidak melihat pendaftar/riwayat SMP
+  await yys('users', 'POST', { username: 'adminmi', password: 'rahasia1', nama: 'A', role: 'admin', lembaga_ids: [MI] });
+  const mi = client(); await mi('login', 'POST', { username: 'adminmi', password: 'rahasia1' });
+  assert.deepStrictEqual((await mi('pendaftar')).data.map((x) => x.no_daftar), ['MI-2026-0001']);
+  assert.strictEqual((await mi(`pendaftar/${pid}`)).status, 404);
+  assert.strictEqual((await mi(`riwayat?siswa_id=${sid}`)).status, 404);
+  assert.strictEqual((await mi('kenaikan', 'POST', { siswa_ids: [s2], aksi: 'lulus' })).status, 404);
+  assert.strictEqual((await mi('export/pendaftar')).status, 200);
+  assert.strictEqual((await yys('dashboard', 'GET', null, MI)).data.pendaftar_baru, 1);
+});

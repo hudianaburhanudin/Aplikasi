@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pendaftaran Siswa Baru - Yayasan Miftahul Ulumillah</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:block}.wrap{max-width:640px;margin:0 auto;padding:20px 14px 60px}
+  .wrap h1{font-size:22px;margin:8px 0 4px}.wrap p.sub{color:var(--mut);margin:0 0 16px}
+  .card{margin-bottom:16px}.card h2{font-size:16px;margin:0 0 12px}
+  .fields .full{grid-column:1/-1}.hp{position:absolute;left:-9999px;height:0;overflow:hidden}
+  .ok{background:#e9f7ef;border:1px solid #b7e1c8}.nomor{font-size:26px;font-weight:700;letter-spacing:.04em;margin:6px 0}
+  .btn.primary{width:100%;padding:11px;font-size:15px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏫 Pendaftaran Siswa Baru</h1>
+  <p class="sub">Yayasan Miftahul Ulumillah <span id="tahun"></span></p>
+
+  <div id="hasil" class="card ok hidden"></div>
+
+  <form id="form" class="card" autocomplete="off">
+    <h2>Formulir Pendaftaran</h2>
+    <p id="tutup" class="error hidden">Saat ini belum ada lembaga yang membuka pendaftaran online.</p>
+    <div class="fields" id="fields">
+      <label class="full">Lembaga yang dituju * <select name="lembaga_id" required></select></label>
+      <label class="full">Nama lengkap calon siswa * <input name="nama" required maxlength="100"></label>
+      <label>Jenis kelamin * <select name="jk" required><option value=""></option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select></label>
+      <label>Tanggal lahir * <input name="tgl_lahir" type="date" required></label>
+      <label>Tempat lahir <input name="tempat_lahir" maxlength="60"></label>
+      <label>NIK <input name="nik" inputmode="numeric" maxlength="20"></label>
+      <label>Nama ayah <input name="nama_ayah" maxlength="100"></label>
+      <label>Nama ibu <input name="nama_ibu" maxlength="100"></label>
+      <label class="full">No. WhatsApp/telepon orang tua * <input name="telepon" type="tel" required maxlength="20"></label>
+      <label class="full">Asal sekolah <input name="asal_sekolah" maxlength="100"></label>
+      <label class="full">Alamat <textarea name="alamat" rows="2" maxlength="300"></textarea></label>
+      <label class="hp" aria-hidden="true">Website <input name="website" tabindex="-1"></label>
+    </div>
+    <p class="error" id="err"></p>
+    <p class="sub" style="margin:0">* wajib diisi. Isi nama ayah atau ibu (salah satu).</p>
+    <button class="btn primary" id="kirim">Kirim Pendaftaran</button>
+  </form>
+
+  <form id="cek" class="card">
+    <h2>Cek Status Pendaftaran</h2>
+    <div class="fields">
+      <label>Nomor pendaftaran <input name="no_daftar" required placeholder="SMP-2026-0001"></label>
+      <label>Tanggal lahir calon siswa <input name="tgl_lahir" type="date" required></label>
+    </div>
+    <p class="error" id="cekErr"></p>
+    <div id="cekHasil"></div>
+    <button class="btn primary">Cek Status</button>
+  </form>
+  <p class="sub"><a href="/">Login petugas</a></p>
+</div>
+<script src="daftar.js"></script>
+</body>
+</html>

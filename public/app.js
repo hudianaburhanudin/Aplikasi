@@ -63,11 +63,17 @@ function openForm(title, fields, values, onSave) {
   dlg.showModal();
 }
 
+function showInfo(title, html) {
+  $('#dlgForm').innerHTML = `<h3>${esc(title)}</h3>${html}<div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button></div>`;
+  $('#dlgForm').onsubmit = null; $('#cancelBtn').onclick = () => $('#dlg').close(); $('#dlg').showModal();
+}
+
 // ---- opsi dropdown ----
 const optKelas = async () => (await api('kelas')).map((k) => ({ value: k.id, label: k.nama }));
 const optGuru = async () => (await api('guru')).map((g) => ({ value: g.id, label: g.nama }));
 const optSiswa = async () => (await api('siswa?status=aktif')).map((s) => ({ value: s.id, label: `${s.nis || '-'} · ${s.nama}` }));
 const optTahun = async () => (await api('tahun_ajaran')).map((t) => ({ value: t.nama, label: t.nama + (t.aktif ? ' (aktif)' : ''), active: !!t.aktif }));
+const STATUS_SISWA = ['aktif', 'lulus', 'pindah', 'keluar'];
 const JK = [{ value: 'L', label: 'Laki-laki' }, { value: 'P', label: 'Perempuan' }];
 
 // ---- halaman CRUD generik ----
@@ -78,8 +84,9 @@ function crudPage(cfg) {
     main.innerHTML = `<h2>${cfg.title}</h2><div class="bar">
       <input id="q" placeholder="Cari…" type="search">
       ${filters.map((f) => `<select data-f="${f.key}"><option value="">${f.label}</option>${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select>`).join('')}
-      <span class="grow"></span><button class="btn" id="xls">⬇ Excel</button><button class="btn" id="pdf">⬇ PDF</button><button class="btn primary" id="add">+ Tambah</button></div>
-      <div class="tablewrap" id="tbl"></div><p id="foot" class="empty" style="text-align:left"></p>`;
+      <span class="grow"></span>${cfg.noExport ? '' : '<button class="btn" id="xls">⬇ Excel</button><button class="btn" id="pdf">⬇ PDF</button>'}<button class="btn primary" id="add">+ Tambah</button></div>
+      <div class="tablewrap" id="tbl"></div><p id="foot" class="empty" style="text-align:left"></p>${cfg.note || ''}`;
+    filters.forEach((f) => { if (f.def) main.querySelector(`[data-f="${f.key}"]`).value = f.def; });
     const load = guard(async () => {
       const params = { q: $('#q').value };
       main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
@@ -87,7 +94,7 @@ function crudPage(cfg) {
       const columns = multi() && cfg.scoped !== false ? [{ key: 'lembaga_kode', label: 'Lembaga' }, ...cfg.columns] : cfg.columns;
       $('#tbl').innerHTML = rows.length ? `<table><thead><tr>${columns.map((c) => `<th>${c.label}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map((r) =>
         `<tr>${columns.map((c) => `<td>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}
-        <td class="act">${(cfg.rowActions || []).map((a) => `<button class="btn small" data-a="${a.name}" data-id="${r.id}">${a.label}</button>`).join(' ')}
+        <td class="act">${(cfg.rowActions || []).filter((a) => !a.show || a.show(r)).map((a) => `<button class="btn small" data-a="${a.name}" data-id="${r.id}">${a.label}</button>`).join(' ')}
         <button class="btn small" data-a="edit" data-id="${r.id}">Ubah</button>
         <button class="btn small danger" data-a="del" data-id="${r.id}">Hapus</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada data.</div>';
       $('#foot').textContent = cfg.footer ? cfg.footer(rows) : `${rows.length} data`;
@@ -99,7 +106,7 @@ function crudPage(cfg) {
           if (!confirm('Hapus data ini?')) return;
           await api(`${cfg.key}/${row.id}`, { method: 'DELETE' }); toast('Data dihapus'); return load();
         }
-        cfg.rowActions.find((a) => a.name === b.dataset.a).run(row);
+        cfg.rowActions.find((a) => a.name === b.dataset.a).run(row, load);
       });
     });
     const form = guard(async (row) => {
@@ -110,12 +117,12 @@ function crudPage(cfg) {
       });
     });
     $('#add').onclick = () => form();
-    $('#xls').onclick = () => {
+    if (!cfg.noExport) $('#xls').onclick = () => {
       const params = { q: $('#q').value };
       main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
       download('export/' + cfg.key + '?' + qs(params));
     };
-    $('#pdf').onclick = () => {
+    if (!cfg.noExport) $('#pdf').onclick = () => {
       const params = { q: $('#q').value };
       main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
       download('pdf/' + cfg.key + '?' + qs(params));
@@ -130,15 +137,21 @@ const pages = {};
 pages.siswa = crudPage({
   key: 'siswa', title: 'Data Siswa', single: 'Siswa',
   filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas },
-    { key: 'status', label: 'Semua status', load: async () => ['aktif', 'lulus', 'pindah'].map((v) => ({ value: v, label: v })) }],
+    { key: 'status', label: 'Semua status', def: 'aktif', load: async () => STATUS_SISWA.map((v) => ({ value: v, label: v })) }],
   columns: [{ key: 'nis', label: 'NIS' }, { key: 'nama', label: 'Nama' }, { key: 'jk', label: 'L/P' },
     { key: 'kelas_nama', label: 'Kelas' }, { key: 'wali', label: 'Wali' }, { key: 'telepon', label: 'Telepon' },
     { label: 'Status', render: (r) => `<span class="badge">${esc(r.status)}</span>` }],
+  rowActions: [{ name: 'riwayat', label: 'Riwayat', run: guard(async (r) => {
+    const h = await api('riwayat?siswa_id=' + r.id);
+    showInfo('Riwayat ' + r.nama, h.length ? `<div class="tablewrap"><table><thead><tr><th>Tanggal</th><th>Jenis</th><th>Dari</th><th>Ke</th><th>Tahun</th></tr></thead><tbody>${h.map((m) =>
+      `<tr><td>${esc(m.tanggal)}</td><td>${esc(m.jenis)}</td><td>${esc(m.dari_kelas)}</td><td>${esc(m.ke_kelas)}</td><td>${esc(m.tahun_ajaran)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Belum ada riwayat.</p>');
+  }) }],
   fields: [{ name: 'nis', label: 'NIS' }, { name: 'nama', label: 'Nama', required: true },
-    { name: 'jk', label: 'Jenis kelamin', options: JK }, { name: 'tgl_lahir', label: 'Tanggal lahir', type: 'date' },
+    { name: 'jk', label: 'Jenis kelamin', options: JK }, { name: 'tempat_lahir', label: 'Tempat lahir' }, { name: 'tgl_lahir', label: 'Tanggal lahir', type: 'date' }, { name: 'nik', label: 'NIK' },
     { name: 'kelas_id', label: 'Kelas', load: optKelas }, { name: 'status', label: 'Status', blank: false, default: 'aktif',
-      options: ['aktif', 'lulus', 'pindah'].map((v) => ({ value: v, label: v })) },
+      options: STATUS_SISWA.map((v) => ({ value: v, label: v })) },
     { name: 'wali', label: 'Nama orang tua/wali' }, { name: 'telepon', label: 'Telepon' },
+    { name: 'tahun_masuk', label: 'Tahun masuk (mis. 2026/2027)' }, { name: 'tahun_lulus', label: 'Tahun lulus' },
     { name: 'alamat', label: 'Alamat', type: 'textarea', full: true }],
 });
 pages.guru = crudPage({
@@ -185,16 +198,81 @@ pages.pembayaran = crudPage({
 
 pages.lembaga = crudPage({
   key: 'lembaga', title: 'Lembaga', single: 'Lembaga', scoped: false,
-  columns: [{ key: 'kode', label: 'Kode' }, { key: 'nama', label: 'Nama' }, { key: 'jenjang', label: 'Jenjang' }, { key: 'telepon', label: 'Telepon' }],
+  noExport: true,
+  columns: [{ key: 'kode', label: 'Kode' }, { key: 'nama', label: 'Nama' }, { key: 'jenjang', label: 'Jenjang' }, { key: 'telepon', label: 'Telepon' },
+    { label: 'Pendaftaran online', render: (r) => r.ppdb_buka ? '<span class="badge">dibuka</span>' : 'ditutup' }],
   fields: [{ name: 'kode', label: 'Kode singkat', required: true }, { name: 'nama', label: 'Nama lembaga', required: true },
-    { name: 'jenjang', label: 'Jenjang' }, { name: 'telepon', label: 'Telepon' }, { name: 'alamat', label: 'Alamat', type: 'textarea', full: true }],
+    { name: 'jenjang', label: 'Jenjang' }, { name: 'telepon', label: 'Telepon' },
+    { name: 'ppdb_buka', label: 'Pendaftaran online (PPDB)', blank: false, default: 0, full: true, options: [{ value: 0, label: 'Ditutup' }, { value: 1, label: 'Dibuka' }] }, { name: 'alamat', label: 'Alamat', type: 'textarea', full: true }],
 });
 pages.tahun = crudPage({
-  key: 'tahun_ajaran', title: 'Tahun Ajaran', single: 'Tahun Ajaran', scoped: false,
+  key: 'tahun_ajaran', title: 'Tahun Ajaran', single: 'Tahun Ajaran', scoped: false, noExport: true,
   columns: [{ key: 'nama', label: 'Tahun ajaran' }, { key: 'mulai', label: 'Mulai' }, { key: 'selesai', label: 'Selesai' },
     { label: 'Status', render: (r) => r.aktif ? '<span class="badge">aktif</span>' : '' }],
   fields: [{ name: 'nama', label: 'Nama (mis. 2026/2027)', required: true, full: true }, { name: 'mulai', label: 'Mulai', type: 'date' }, { name: 'selesai', label: 'Selesai', type: 'date' },
     { name: 'aktif', label: 'Tahun ajaran aktif', blank: false, default: 0, options: [{ value: 0, label: 'Tidak' }, { value: 1, label: 'Ya (menonaktifkan yang lain)' }] }],
+});
+
+const STATUS_PPDB = ['baru', 'terverifikasi', 'diterima', 'cadangan', 'ditolak'];
+const setStatus = (status) => guard(async (r, reload) => { await api('pendaftar/' + r.id, { method: 'PUT', body: { status } }); toast('Status diubah'); reload(); });
+pages.pendaftar = crudPage({
+  key: 'pendaftar', title: 'Pendaftar Baru (PPDB)', single: 'Pendaftar',
+  note: `<p class="empty" style="text-align:left">Tautan pendaftaran online untuk orang tua: <b>${esc(location.origin)}/daftar</b> — buka/tutup per lembaga di menu Lembaga.</p>`,
+  filters: [{ key: 'status', label: 'Semua status', load: async () => [...STATUS_PPDB, 'terdaftar'].map((v) => ({ value: v, label: v })) }],
+  columns: [{ key: 'no_daftar', label: 'No. Daftar' }, { key: 'nama', label: 'Nama' }, { key: 'jk', label: 'L/P' }, { key: 'tgl_lahir', label: 'Tgl lahir' },
+    { key: 'asal_sekolah', label: 'Asal sekolah' }, { key: 'telepon', label: 'Telepon' }, { label: 'Status', render: (r) => `<span class="badge">${esc(r.status)}</span>` }],
+  rowActions: [
+    { name: 'terima', label: 'Terima', show: (r) => ['baru', 'terverifikasi', 'cadangan'].includes(r.status), run: setStatus('diterima') },
+    { name: 'tolak', label: 'Tolak', show: (r) => ['baru', 'terverifikasi', 'cadangan'].includes(r.status), run: setStatus('ditolak') },
+    { name: 'siswa', label: 'Jadikan siswa', show: (r) => r.status === 'diterima' && !r.siswa_id, run: guard(async (r, reload) => {
+      const kelas = (await api('kelas')).filter((k) => k.lembaga_id === r.lembaga_id).map((k) => ({ value: k.id, label: `${k.nama} (${k.tahun_ajaran || '-'})` }));
+      openForm('Jadikan siswa: ' + r.nama, [{ name: 'kelas_id', label: 'Kelas', options: kelas, full: true }, { name: 'nis', label: 'NIS (opsional, bisa diisi nanti)', full: true }], {},
+        async (d) => { await api(`pendaftar/${r.id}/terima`, { method: 'POST', body: d }); toast('Ditambahkan sebagai siswa aktif'); reload(); });
+    }) }],
+  fields: [{ name: 'nama', label: 'Nama', required: true, full: true }, { name: 'jk', label: 'Jenis kelamin', options: JK }, { name: 'tgl_lahir', label: 'Tanggal lahir', type: 'date' },
+    { name: 'tempat_lahir', label: 'Tempat lahir' }, { name: 'nik', label: 'NIK' }, { name: 'nama_ayah', label: 'Nama ayah' }, { name: 'nama_ibu', label: 'Nama ibu' },
+    { name: 'telepon', label: 'Telepon/WA' }, { name: 'asal_sekolah', label: 'Asal sekolah' }, { name: 'alamat', label: 'Alamat', type: 'textarea', full: true },
+    { name: 'status', label: 'Status seleksi', blank: false, default: 'baru', options: STATUS_PPDB.map((v) => ({ value: v, label: v })) },
+    { name: 'catatan', label: 'Catatan internal' }],
+});
+
+pages.kenaikan = guard(async () => {
+  const kelas = await api('kelas');
+  const label = (k) => `${multi() ? k.lembaga_kode + ' · ' : ''}${k.nama}${k.tahun_ajaran ? ' (' + k.tahun_ajaran + ')' : ''}`;
+  $('#main').innerHTML = `<h2>Kenaikan Kelas & Kelulusan</h2>
+    <div class="card" style="display:grid;gap:12px;max-width:760px">
+      <div class="fields"><label>Kelas asal<select id="asal"><option value=""></option>${kelas.map((k) => `<option value="${k.id}">${esc(label(k))}</option>`).join('')}</select></label>
+        <label>Tindakan<select id="aksi"><option value="naik">Naik ke kelas…</option><option value="lulus">Lulus (menjadi alumni)</option><option value="pindah">Pindah sekolah</option><option value="keluar">Keluar</option></select></label>
+        <label id="tujuanWrap" class="full">Kelas tujuan<select id="tujuan"></select></label>
+        <label class="full">Keterangan (opsional)<input id="ket" maxlength="200"></label></div>
+      <div id="siswa" class="tablewrap"><div class="empty">Pilih kelas asal.</div></div>
+      <div class="bar" style="margin:0"><span id="cnt" class="grow"></span><button class="btn primary" id="proses" disabled>Proses</button></div></div>`;
+  let siswa = [];
+  const checked = () => [...document.querySelectorAll('#siswa input[data-id]:checked')].map((i) => Number(i.dataset.id));
+  const refresh = () => {
+    const aksi = $('#aksi').value, asal = kelas.find((k) => String(k.id) === $('#asal').value);
+    $('#tujuanWrap').classList.toggle('hidden', aksi !== 'naik');
+    $('#tujuan').innerHTML = kelas.filter((k) => asal && k.lembaga_id === asal.lembaga_id && k.id !== asal.id).map((k) => `<option value="${k.id}">${esc(label(k))}</option>`).join('');
+    $('#cnt').textContent = `${checked().length} dari ${siswa.length} siswa dipilih`;
+    $('#proses').disabled = !checked().length || (aksi === 'naik' && !$('#tujuan').value);
+  };
+  const load = guard(async () => {
+    siswa = $('#asal').value ? await api('siswa?' + qs({ kelas_id: $('#asal').value, status: 'aktif' })) : [];
+    $('#siswa').innerHTML = siswa.length ? `<table><thead><tr><th><input type="checkbox" id="all" checked></th><th>NIS</th><th>Nama</th></tr></thead><tbody>${siswa.map((x) =>
+      `<tr><td><input type="checkbox" data-id="${x.id}" checked></td><td>${esc(x.nis)}</td><td>${esc(x.nama)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Tidak ada siswa aktif.</div>';
+    const all = $('#all'); if (all) all.onchange = () => { document.querySelectorAll('#siswa input[data-id]').forEach((i) => { i.checked = all.checked; }); refresh(); };
+    refresh();
+  });
+  $('#asal').onchange = load; $('#aksi').onchange = refresh; $('#tujuan').onchange = refresh;
+  $('#siswa').onchange = refresh;
+  $('#proses').onclick = guard(async () => {
+    const ids = checked(), aksi = $('#aksi').value;
+    const msg = { naik: 'dinaikkan kelas', lulus: 'diluluskan', pindah: 'ditandai pindah', keluar: 'ditandai keluar' }[aksi];
+    if (!confirm(`${ids.length} siswa akan ${msg}. Lanjutkan?`)) return;
+    await api('kenaikan', { method: 'POST', body: { siswa_ids: ids, aksi, ke_kelas_id: $('#tujuan').value, keterangan: $('#ket').value } });
+    toast(`${ids.length} siswa ${msg}`); load();
+  });
+  refresh();
 });
 
 // ---- dashboard ----
@@ -204,7 +282,7 @@ pages.dashboard = guard(async () => {
   const bars = (rows, label) => { const max = Math.max(1, ...rows.map((r) => r.jumlah)); return rows.map((r) =>
     `<div><span>${esc(label(r))}</span><i style="width:${r.jumlah / max * 100}%"></i><span>${r.jumlah}</span></div>`).join('') || '<p class="empty">Belum ada data.</p>'; };
   $('#main').innerHTML = `<h2>Dashboard</h2><div class="stats">
-    ${[['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)]]
+    ${[['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pendaftar baru', d.pendaftar_baru], ['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)]]
       .map(([l, n]) => `<div class="card stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('')}</div>
     <div class="grid2"><div class="card"><b>Absensi hari ini</b><p>Hadir ${a.H || 0} · Sakit ${a.S || 0} · Izin ${a.I || 0} · Alpa ${a.A || 0}</p></div>
     ${d.multi ? `<div class="card"><b>Siswa per lembaga</b><div class="bars">${bars(d.per_lembaga, (r) => r.kode)}</div></div>` : ''}
@@ -307,7 +385,7 @@ pages.pengguna = guard(async () => {
 // ---- shell ----
 const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'];
 const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', ALL],
-  ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['pengguna', 'Pengguna', ADM],
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['pengguna', 'Pengguna', ADM],
   ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']]];
 
 function route() {
