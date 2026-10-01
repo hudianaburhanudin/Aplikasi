@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administrasi Sekolah</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="loginForm" class="card">
+    <h1>🏫 Administrasi Sekolah</h1>
+    <label>Username <input name="username" autocomplete="username" required autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <p class="error" id="loginError"></p>
+    <button class="btn primary">Masuk</button>
+  </form>
+</div>
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand">🏫 Sekolah</div>
+    <nav id="nav"></nav>
+    <div class="who"><span id="who"></span>
+      <button class="btn small" id="pwBtn">Ganti password</button>
+      <button class="btn small" id="logoutBtn">Keluar</button></div>
+  </aside>
+  <main id="main"></main>
+</div>
+<dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>
