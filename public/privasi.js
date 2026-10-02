@@ -63,7 +63,8 @@ fetch('/api/public/privasi').then((r) => r.json()).catch(() => ({})).then((d) =>
   <li>Kata sandi disimpan terenkripsi satu arah, minimal 8 karakter. Akun baru dan hasil reset password wajib mengganti kata sandi saat masuk pertama.</li>
   <li>Akses dibatasi menurut peran dan lembaga. Percobaan masuk yang berulang dibatasi sementara.</li>
   <li>Pesan WhatsApp diperiksa tanda tangan digitalnya, sehingga hanya pesan asli dari Meta yang diproses.</li>
-  <li>Database dicadangkan otomatis setiap hari (14 salinan terakhir).</li></ul>
+  <li>Database dicadangkan otomatis setiap hari (14 salinan terakhir).</li>
+  <li>Tindakan penting, seperti penghapusan data, pembuatan dan reset akun, dan pemrosesan permintaan data, dicatat dalam jejak audit.</li></ul>
   <p>Tidak ada sistem yang sepenuhnya aman. Bila terjadi kebocoran data yang berisiko bagi pemilik data, kami akan memberi tahu pemilik data dan pihak berwenang sesuai ketentuan perundang-undangan.</p>
 
   <h2>9. Berapa lama data disimpan</h2>
@@ -79,8 +80,8 @@ fetch('/api/public/privasi').then((r) => r.json()).catch(() => ({})).then((d) =>
   <h2>10. Hak Anda</h2>
   <p>Sebagai pemilik data, atau orang tua dan wali yang mewakili anak, Anda berhak:</p>
   <ul><li>mengetahui dan meminta salinan data yang kami simpan;</li><li>meminta data yang salah diperbaiki;</li><li>meminta data dihapus atau pemrosesannya dibatasi, sepanjang tidak bertentangan dengan kewajiban administrasi pendidikan;</li><li>menarik persetujuan yang pernah diberikan;</li><li>mengajukan keberatan dan pengaduan.</li></ul>
-  <p>Cara mengajukan: hubungi kontak di bagian 12 atau tata usaha lembaga, sebutkan nama anak dan lembaganya. Kami memverifikasi dulu bahwa pemohon adalah orang tua atau wali yang tercatat, lalu menjawab permintaan secepatnya. Data yang wajib dipertahankan, misalnya nilai dan riwayat kelulusan, akan kami jelaskan alasannya.</p>
-  <p id="hapus-data"><b>Permintaan penghapusan data atau akun.</b> Kirim email ke alamat di bagian 12 dengan subjek "Penghapusan data", sebutkan nama anak, lembaga, dan nomor HP akun wali. Kami menghapus akun wali dan data yang tidak lagi wajib disimpan.</p>
+  <p>Cara mengajukan: wali murid dapat langsung memakai menu <b>Data &amp; privasi</b> di aplikasi wali (salinan data, koreksi, penghapusan data anak, atau penghapusan akun). Selain itu, hubungi kontak di bagian 12 atau tata usaha lembaga, sebutkan nama anak dan lembaganya. Salinan data diserahkan dalam bentuk dokumen PDF. Kami memverifikasi dulu bahwa pemohon adalah orang tua atau wali yang tercatat, lalu menjawab permintaan secepatnya. Data yang wajib dipertahankan, misalnya nilai dan riwayat kelulusan, akan kami jelaskan alasannya.</p>
+  <p id="hapus-data"><b>Permintaan penghapusan data atau akun.</b> Ajukan lewat menu Data &amp; privasi di aplikasi wali, atau kirim email ke alamat di bagian 12 dengan subjek "Penghapusan data", sebutkan nama anak, lembaga, dan nomor HP akun wali. Kami menghapus akun wali dan data yang tidak lagi wajib disimpan.</p>
 
   <h2>11. Data anak dan persetujuan orang tua</h2>
   <p>Sebagian besar siswa belum dewasa. Karena itu kami meminta persetujuan orang tua atau wali pada formulir pendaftaran online; persetujuan itu dicatat bersama waktunya. Halaman masuk aplikasi wali juga menampilkan tautan ke kebijakan ini. Orang tua dapat menarik persetujuan kapan saja; akibatnya sebagian layanan, misalnya akses aplikasi wali, dapat berhenti, sedangkan data yang wajib untuk administrasi pendidikan tetap diproses sesuai dasarnya. Kami tidak memakai data anak untuk iklan atau pemasaran.</p>

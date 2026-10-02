@@ -134,8 +134,10 @@ const ROLES = ['yayasan', 'admin', 'staf', 'guru']; // 'wali' dikelola lewat /ap
 const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran']);
 const GURU_BACA_SAJA = new Set(['kelas', 'siswa', 'jenis_pelanggaran']);
 const MIN_PW = 8;
+const PERMINTAAN_JENIS = { salinan: 'Salinan data anak', koreksi: 'Koreksi data anak', hapus_data: 'Penghapusan data anak', hapus_akun: 'Penghapusan akun wali' };
+const PENDAFTAR_KEDALUWARSA = "status IN ('ditolak', 'cadangan', 'baru', 'terverifikasi')";   // belum menjadi siswa dan tidak sedang diproses
 const PROFIL_PRIVASI = ['alamat_kantor', 'kontak_email', 'kontak_telepon', 'pejabat_pdp', 'tanggal_berlaku', 'penyedia_server', 'retensi_alumni', 'retensi_pendaftar'];   // tampil di halaman publik /privasi
-const PROFIL_KEYS = ['nama_yayasan', 'sk_pengesahan', 'sk_perubahan', 'tanggal_sk_perubahan', 'akta_notaris', 'alamat', 'kecamatan', 'kabupaten', 'provinsi', ...PROFIL_PRIVASI];
+const PROFIL_KEYS = ['hapus_pendaftar_bulan', 'nama_yayasan', 'sk_pengesahan', 'sk_perubahan', 'tanggal_sk_perubahan', 'akta_notaris', 'alamat', 'kecamatan', 'kabupaten', 'provinsi', ...PROFIL_PRIVASI];
 const WA_LOG_HARI = 90;
 const PW_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
 const genPassword = () => Array.from({ length: 10 }, () => PW_CHARS[crypto.randomInt(PW_CHARS.length)]).join('');
@@ -149,6 +151,8 @@ class HttpError extends Error {
 function createApp(dbFile, opts = {}) {
   const db = openDb(dbFile);
   const wa = createWa(db, { todayWib, fetchImpl: opts.fetch });
+  // Jejak audit: tindakan penting (hapus, akun, hak pemilik data). Tidak mencatat siapa yang melihat data.
+  const catat = (u, aksi, detail) => db.prepare('INSERT INTO audit (aktor, aksi, detail) VALUES (?,?,?)').run(u ? `${u.nama} (${u.username || u.id})` : 'sistem', aksi, String(detail || '').slice(0, 300));
   const sessions = new Map(); // token -> {userId, exp}
   const attempts = new Map(); // ip -> {n, until}
   const buckets = new Map(); // "nama:ip" -> {n, reset}
@@ -395,6 +399,77 @@ function createApp(dbFile, opts = {}) {
     return { balasan: r.balasan, status: r.status };
   }
 
+  // ---- penghapusan pendaftar otomatis (opsional, diatur yayasan) ----
+  const pengaturan = (k) => (db.prepare('SELECT nilai FROM pengaturan WHERE kunci = ?').get(k) || {}).nilai;
+  const bulanHapusPendaftar = () => Math.max(0, Math.floor(Number(pengaturan('hapus_pendaftar_bulan')) || 0));
+  const pendaftarKedaluwarsa = (bulan) => (bulan > 0 ? Number(db.prepare(`SELECT COUNT(*) n FROM pendaftar WHERE ${PENDAFTAR_KEDALUWARSA} AND dibuat < datetime('now', ?)`).get(`-${bulan} months`).n) : 0);
+  function purgePendaftar() {
+    const bulan = bulanHapusPendaftar();
+    if (!bulan) return 0;
+    const n = Number(db.prepare(`DELETE FROM pendaftar WHERE ${PENDAFTAR_KEDALUWARSA} AND dibuat < datetime('now', ?)`).run(`-${bulan} months`).changes);
+    if (n) catat(null, 'hapus_pendaftar_otomatis', `${n} pendaftar yang tidak menjadi siswa, lebih dari ${bulan} bulan`);
+    return n;
+  }
+
+  // ---- permintaan data dari wali (hak pemilik data) ----
+  function permintaanList(ctx) {
+    const ids = ctx.scope.ids;
+    if (!ids.length) return [];
+    const lihat = (p) => ids.some((i) => String(p.lembaga_ids || '').includes(`,${i},`));
+    return db.prepare(`SELECT p.*, s.nama anak, l.kode lembaga_kode FROM permintaan_data p LEFT JOIN siswa s ON s.id = p.siswa_id LEFT JOIN lembaga l ON l.id = s.lembaga_id
+      ORDER BY (p.status IN ('baru', 'diproses')) DESC, p.id DESC LIMIT 600`).all().filter(lihat).slice(0, 200);
+  }
+  function prosesPermintaan(id, body, ctx) {
+    if (ctx.user.role !== 'yayasan' && ctx.user.role !== 'admin') throw new HttpError(403, 'Hanya admin yang dapat memproses permintaan data');
+    const r = permintaanList(ctx).find((x) => x.id === id);
+    if (!r) throw new HttpError(404, 'Permintaan tidak ditemukan');
+    if (!['baru', 'diproses'].includes(r.status)) throw new HttpError(400, 'Permintaan ini sudah selesai');
+    const aksi = String(body.aksi || ''), catatan = str(body.catatan, 500);
+    const tutup = (status, hasil) => db.prepare('UPDATE permintaan_data SET status = ?, diproses = datetime(\'now\'), diproses_oleh = ?, hasil = ? WHERE id = ?').run(status, ctx.user.nama, hasil, id);
+    if (aksi === 'diproses') { db.prepare("UPDATE permintaan_data SET status = 'diproses', diproses_oleh = ? WHERE id = ?").run(ctx.user.nama, id); return { ok: true }; }
+    if (aksi === 'tolak') {
+      if (!catatan) throw new HttpError(400, 'Tuliskan alasan penolakan agar wali mengetahuinya');
+      tutup('ditolak', catatan); catat(ctx.user, 'tolak_permintaan', `#${id} ${r.jenis}: ${catatan}`); return { ok: true };
+    }
+    if (aksi === 'selesai') { tutup('selesai', catatan || 'Permintaan telah diproses.'); catat(ctx.user, 'selesai_permintaan', `#${id} ${r.jenis}`); return { ok: true }; }
+    if (aksi === 'hapus_akun') {
+      if (r.jenis !== 'hapus_akun' || !r.user_id) throw new HttpError(400, 'Aksi ini hanya untuk permintaan penghapusan akun');
+      const tertaut = db.prepare('SELECT s.lembaga_id FROM wali_siswa w JOIN siswa s ON s.id = w.siswa_id WHERE w.user_id = ?').all(r.user_id);
+      if (tertaut.some((x) => !ctx.scope.ids.includes(x.lembaga_id))) throw new HttpError(403, 'Akun ini terhubung ke anak di lembaga lain. Minta admin yayasan memprosesnya.');
+      db.exec('BEGIN');
+      try {
+        tutup('selesai', catatan || 'Akun wali telah dihapus.');
+        db.prepare("DELETE FROM users WHERE id = ? AND role = 'wali'").run(r.user_id);
+        db.exec('COMMIT');
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+      for (const [t, s] of sessions) if (s.userId === r.user_id) sessions.delete(t);
+      catat(ctx.user, 'hapus_akun_wali', `${r.wali_username} (permintaan #${id})`);
+      return { ok: true };
+    }
+    throw new HttpError(400, 'Aksi tidak dikenal');
+  }
+  // Salinan seluruh data satu anak (hak akses pemilik data), diserahkan admin kepada wali.
+  function salinanData(id, ctx) {
+    const r = permintaanList(ctx).find((x) => x.id === id);
+    if (!r || r.jenis !== 'salinan' || !r.siswa_id) throw new HttpError(404, 'Permintaan salinan tidak ditemukan');
+    const s = db.prepare(`SELECT s.*, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama FROM siswa s JOIN lembaga l ON l.id = s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id WHERE s.id = ?`).get(r.siswa_id);
+    if (!s || !ctx.scope.ids.includes(s.lembaga_id)) throw new HttpError(404, 'Data tidak ditemukan');
+    const rows = [], add = (kat, tgl, uraian) => rows.push([kat, tgl || '', uraian]);
+    for (const [k, v] of [['Nama', s.nama], ['NIS', s.nis], ['NIK', s.nik], ['Jenis kelamin', s.jk], ['Tempat lahir', s.tempat_lahir], ['Tanggal lahir', s.tgl_lahir], ['Alamat', s.alamat], ['Orang tua/wali', s.wali],
+      ['Telepon', s.telepon], ['Kelas', s.kelas_nama], ['Status', s.status], ['Tahun masuk', s.tahun_masuk], ['Tahun lulus', s.tahun_lulus]]) if (v) add('Identitas', '', `${k}: ${v}`);
+    for (const m of db.prepare('SELECT m.tanggal, m.jenis, kd.nama dari, kk.nama ke, m.keterangan FROM mutasi m LEFT JOIN kelas kd ON kd.id = m.dari_kelas_id LEFT JOIN kelas kk ON kk.id = m.ke_kelas_id WHERE m.siswa_id = ? ORDER BY m.id').all(s.id))
+      add('Riwayat kelas', m.tanggal, `${m.jenis}${m.dari ? ' dari ' + m.dari : ''}${m.ke ? ' ke ' + m.ke : ''}${m.keterangan ? ' (' + m.keterangan + ')' : ''}`);
+    const ab = db.prepare("SELECT COALESCE(SUM(status='H'),0) h, COALESCE(SUM(status='S'),0) s, COALESCE(SUM(status='I'),0) i, COALESCE(SUM(status='A'),0) a FROM absensi WHERE siswa_id = ?").get(s.id);
+    add('Kehadiran', '', `Total: hadir ${ab.h}, sakit ${ab.s}, izin ${ab.i}, alpa ${ab.a}`);
+    for (const a of db.prepare("SELECT tanggal, status, keterangan FROM absensi WHERE siswa_id = ? AND status != 'H' ORDER BY tanggal").all(s.id)) add('Kehadiran', a.tanggal, `${{ S: 'Sakit', I: 'Izin', A: 'Alpa' }[a.status]}${a.keterangan ? ' - ' + a.keterangan : ''}`);
+    for (const n of db.prepare('SELECT tanggal, mapel, jenis, nilai, semester FROM nilai WHERE siswa_id = ? ORDER BY tanggal, id').all(s.id)) add('Nilai', n.tanggal, `${n.mapel}${n.jenis ? ' (' + n.jenis + ')' : ''}: ${n.nilai}${n.semester ? ', semester ' + n.semester : ''}`);
+    for (const t of db.prepare('SELECT t.jenis, t.periode, t.jumlah, t.jatuh_tempo FROM tagihan t WHERE t.siswa_id = ? ORDER BY t.periode, t.id').all(s.id)) add('Tagihan', t.jatuh_tempo, `${t.jenis}${t.periode ? ' ' + t.periode : ''}: ${rp(t.jumlah)}`);
+    for (const p of db.prepare('SELECT tanggal, jenis, bulan, jumlah FROM pembayaran WHERE siswa_id = ? ORDER BY tanggal, id').all(s.id)) add('Pembayaran', p.tanggal, `${p.jenis}${p.bulan ? ' ' + p.bulan : ''}: ${rp(p.jumlah)}`);
+    for (const v of db.prepare('SELECT tanggal, jenis_nama, poin, keterangan FROM pelanggaran WHERE siswa_id = ? ORDER BY tanggal, id').all(s.id)) add('Pelanggaran', v.tanggal, `${v.jenis_nama} (+${v.poin})${v.keterangan ? ' - ' + v.keterangan : ''}`);
+    catat(ctx.user, 'salinan_data', `siswa #${s.id} (permintaan #${id})`);
+    return { siswa: s, rows };
+  }
+
   // ---- tagihan massal ----
   function generateTagihan(body, ctx) {
     const kid = Number(body.kelas_id);
@@ -444,6 +519,7 @@ function createApp(dbFile, opts = {}) {
         }
         db.prepare('INSERT OR IGNORE INTO wali_siswa (user_id, siswa_id) VALUES (?,?)').run(uid, siswa.id);
         db.exec('COMMIT');
+        catat(ctx.user, u ? 'tautkan_wali' : 'buat_akun_wali', `${username} -> ${siswa.nama}`);
         return { user_id: uid, username, password, baru: !u };
       } catch (e) { db.exec('ROLLBACK'); throw e; }
     }
@@ -455,6 +531,7 @@ function createApp(dbFile, opts = {}) {
       const password = genPassword();
       db.prepare('UPDATE users SET password = ?, must_change = 1 WHERE id = ?').run(hashPassword(password), uid);
       for (const [t, s] of sessions) if (s.userId === uid) sessions.delete(t);
+      catat(ctx.user, 'reset_password_wali', `user #${uid}`);
       return { password };
     }
     if (method === 'DELETE') {
@@ -466,13 +543,14 @@ function createApp(dbFile, opts = {}) {
         db.prepare("DELETE FROM users WHERE id = ? AND role = 'wali'").run(uid);
         for (const [t, s] of sessions) if (s.userId === uid) sessions.delete(t);
       }
+      catat(ctx.user, 'lepas_wali', `user #${uid} dari siswa #${q.siswa_id}`);
       return { ok: true };
     }
     throw new HttpError(405, 'Metode tidak didukung');
   }
 
   // ---- API untuk wali murid (hanya baca, hanya anak yang tertaut) ----
-  function waliApi(parts, ctx) {
+  function waliApi(parts, ctx, method = 'GET', body = {}) {
     const anak = () => db.prepare(`SELECT s.id, s.nis, s.nama, s.jk, s.status, s.lembaga_id, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama, g.nama wali_kelas
       FROM wali_siswa w JOIN siswa s ON s.id = w.siswa_id JOIN lembaga l ON l.id = s.lembaga_id
       LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN guru g ON g.id = k.wali_guru_id
@@ -497,6 +575,32 @@ function createApp(dbFile, opts = {}) {
         pelanggaran: { total_poin: db.prepare('SELECT COALESCE(SUM(poin), 0) n FROM pelanggaran WHERE siswa_id = ?').get(id).n,
           daftar: db.prepare('SELECT tanggal, jenis_nama, poin, keterangan FROM pelanggaran WHERE siswa_id = ? ORDER BY tanggal DESC, id DESC LIMIT 50').all(id) },
       };
+    }
+    if (what === 'permintaan') {
+      if (method === 'GET') {
+        return db.prepare(`SELECT p.id, p.jenis, p.catatan, p.status, p.dibuat, p.diproses, p.hasil, s.nama anak FROM permintaan_data p
+          LEFT JOIN siswa s ON s.id = p.siswa_id WHERE p.user_id = ? ORDER BY p.id DESC LIMIT 30`).all(ctx.user.id);
+      }
+      if (method === 'POST') {
+        const jenis = String(body.jenis || '');
+        if (!PERMINTAAN_JENIS[jenis]) throw new HttpError(400, 'Jenis permintaan tidak valid');
+        let sid = null;
+        if (jenis !== 'hapus_akun') {
+          sid = Number(body.siswa_id);
+          if (!anak().some((a) => a.id === sid)) throw new HttpError(404, 'Data anak tidak ditemukan');
+        }
+        const catatan = str(body.catatan, 500);
+        if (jenis === 'koreksi' && !catatan) throw new HttpError(400, 'Tuliskan data apa yang perlu dikoreksi');
+        const terbuka = db.prepare("SELECT jenis, siswa_id FROM permintaan_data WHERE user_id = ? AND status IN ('baru', 'diproses')").all(ctx.user.id);
+        if (terbuka.some((r) => r.jenis === jenis && r.siswa_id === sid)) throw new HttpError(409, 'Permintaan serupa masih diproses');
+        if (terbuka.length >= 6) throw new HttpError(429, 'Terlalu banyak permintaan yang belum selesai');
+        const kelompok = jenis === 'hapus_akun' ? anak() : anak().filter((a) => a.id === sid);
+        const lembagaIds = `,${[...new Set(kelompok.map((a) => a.lembaga_id))].join(',')},`;
+        const id = Number(db.prepare('INSERT INTO permintaan_data (user_id, wali_nama, wali_username, siswa_id, jenis, catatan, lembaga_ids, ringkasan) VALUES (?,?,?,?,?,?,?,?)')
+          .run(ctx.user.id, ctx.user.nama, ctx.user.username, sid, jenis, catatan, lembagaIds, kelompok.map((a) => `${a.nama} (${a.lembaga_nama})`).join('; ')).lastInsertRowid);
+        catat(ctx.user, 'permintaan_data', `${jenis}${sid ? ` siswa #${sid}` : ''} (permintaan #${id})`);
+        return { id };
+      }
     }
     if (what === 'pengumuman') {
       const lids = [...new Set(anak().map((a) => a.lembaga_id))];
@@ -563,8 +667,9 @@ function createApp(dbFile, opts = {}) {
       return { ok: true };
     }
     if (method === 'DELETE' && id) {
-      getRow(cfg, id, ctx);
+      const lama = getRow(cfg, id, ctx);
       db.prepare(`DELETE FROM ${cfg.table} WHERE id = ?`).run(id);
+      catat(ctx.user, 'hapus_' + cfg.table, `#${id} ${lama.nama || lama.siswa_nama || lama.judul || lama.no_daftar || ''}`.trim());
       return { ok: true };
     }
     throw new HttpError(405, 'Metode tidak didukung');
@@ -616,6 +721,7 @@ function createApp(dbFile, opts = {}) {
       guru: n(`SELECT COUNT(*) n FROM guru WHERE lembaga_id IN (${p})`, ...ids),
       kelas: n(`SELECT COUNT(*) n FROM kelas WHERE lembaga_id IN (${p})`, ...ids),
       pendaftar_baru: n(`SELECT COUNT(*) n FROM pendaftar WHERE status = 'baru' AND lembaga_id IN (${p})`, ...ids),
+      permintaan_baru: permintaanList(ctx).filter((r) => r.status === 'baru').length,
       tunggakan: n(`SELECT COALESCE(SUM(sisa), 0) n FROM (SELECT ${TSISA} sisa FROM tagihan t JOIN siswa s ON s.id = t.siswa_id
         WHERE s.lembaga_id IN (${p}) AND t.jatuh_tempo < ?)`, ...ids, today),
       absensi_hari_ini: abs,
@@ -686,6 +792,7 @@ function createApp(dbFile, opts = {}) {
           .run(String(username).trim(), hashPassword(String(password)), String(nama).trim(), role, nomor);
         setLembaga(Number(r.lastInsertRowid), arr);
         db.exec('COMMIT');
+        catat(me, 'tambah_pengguna', `${username} (${role})`);
         return { id: Number(r.lastInsertRowid) };
       } catch (e) { db.exec('ROLLBACK'); throw e; }
     }
@@ -705,6 +812,7 @@ function createApp(dbFile, opts = {}) {
         }
         if (arr) setLembaga(target.id, arr);
         db.exec('COMMIT');
+        catat(me, 'ubah_pengguna', `${target.username}${role !== target.role ? ` peran ${target.role}->${role}` : ''}${body.password ? ' password direset' : ''}`);
       } catch (e) { db.exec('ROLLBACK'); throw e; }
       return { ok: true };
     }
@@ -713,6 +821,7 @@ function createApp(dbFile, opts = {}) {
       if (lastYayasan(target)) throw new HttpError(400, 'Akun admin yayasan terakhir tidak dapat dihapus');
       db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
       for (const [t, s] of sessions) if (s.userId === target.id) sessions.delete(t);
+      catat(me, 'hapus_pengguna', target.username);
       return { ok: true };
     }
     throw new HttpError(405, 'Metode tidak didukung');
@@ -817,6 +926,12 @@ function createApp(dbFile, opts = {}) {
         res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${fname}"` });
         return res.end(buf);
       };
+      if (name === 'pdf' && key === 'salinan') {
+        if (ctx.user.role !== 'yayasan' && ctx.user.role !== 'admin') throw new HttpError(403, 'Hanya admin yang dapat membuat salinan data');
+        const d = salinanData(Number(q.id), ctx);
+        return file(tablePdf({ title: 'Salinan Data Siswa', subtitle: `${d.siswa.nama} · ${d.siswa.lembaga_nama} · dibuat ${today} · diserahkan kepada orang tua/wali atas permintaan`,
+          headers: ['Kategori', 'Tanggal', 'Uraian'], rows: d.rows, logo: logoJpeg(d.siswa.lembaga_kode) }), 'application/pdf', `salinan-data-${d.siswa.id}.pdf`);
+      }
       if (name === 'pdf' && key === 'rapor') { const r = rapor(q, ctx); return file(raporPdf(r, logoJpeg(r.siswa.lembaga_kode)), 'application/pdf', `rapor-${q.siswa_id}.pdf`); }
       if (name === 'pdf' && key === 'kuitansi') { const pb = crud(RES.pembayaran, 'GET', Number(q.id), {}, {}, ctx); return file(kuitansiPdf(pb, rp, logoJpeg(pb.lembaga_kode)), 'application/pdf', `kuitansi-${q.id}.pdf`); }
       const ex = EXPORTS[key];
@@ -837,13 +952,23 @@ function createApp(dbFile, opts = {}) {
       return file(tablePdf({ title: ex[0], subtitle: sub, headers: cols.map((i) => ex[1][i][0]), rows: rows.map((r) => cols.map((i) => r[i])), footer: total, logo }),
         'application/pdf', `${key}-${today}.pdf`);
     }
-    if (name === 'wali') return send(res, 200, waliApi(parts, ctx));
+    if (name === 'wali') return send(res, 200, waliApi(parts, ctx, method, method === 'POST' ? await readBody(req) : {}));
     if (name === 'wa') {
       if (ctx.user.role !== 'yayasan' && ctx.user.role !== 'admin') throw new HttpError(403, 'Hanya admin yang dapat mengelola WhatsApp');
       if (parts[1] === 'status') return send(res, 200, waStatus(ctx));
       if (parts[1] === 'log') return send(res, 200, waLog(ctx));
       if (parts[1] === 'simulasi' && method === 'POST') return send(res, 200, waSimulasi(await readBody(req), ctx));
       throw new HttpError(404, 'Endpoint tidak ditemukan');
+    }
+    if (name === 'permintaan') {
+      if (ctx.user.role !== 'yayasan' && ctx.user.role !== 'admin') throw new HttpError(403, 'Hanya admin yang dapat melihat permintaan data');
+      if (method === 'GET' && !id) return send(res, 200, permintaanList(ctx));
+      if (method === 'POST' && id && parts[2] === 'proses') return send(res, 200, prosesPermintaan(id, await readBody(req), ctx));
+      throw new HttpError(404, 'Endpoint tidak ditemukan');
+    }
+    if (name === 'audit') {
+      if (ctx.user.role !== 'yayasan') throw new HttpError(403, 'Hanya admin yayasan yang dapat melihat jejak audit');
+      return send(res, 200, db.prepare('SELECT id, waktu, aktor, aksi, detail FROM audit ORDER BY id DESC LIMIT 300').all());
     }
     if (name === 'pelanggaran' && parts[1] === 'ringkasan') return send(res, 200, ringkasanPoin(ctx, q));
     if (name === 'wali-akun') return send(res, 200, waliAkun(method, parts, q, method === 'POST' ? await readBody(req) : {}, ctx));
@@ -856,10 +981,15 @@ function createApp(dbFile, opts = {}) {
       if (method === 'PUT') {
         const b = await readBody(req);
         const up = db.prepare('INSERT INTO pengaturan (kunci, nilai) VALUES (?, ?) ON CONFLICT (kunci) DO UPDATE SET nilai = excluded.nilai');
+        if ('hapus_pendaftar_bulan' in b) {
+          const n = Number(b.hapus_pendaftar_bulan || 0);
+          if (!Number.isInteger(n) || n < 0 || n > 120) throw new HttpError(400, 'Batas hapus pendaftar harus 0 (nonaktif) sampai 120 bulan');
+          if (n !== bulanHapusPendaftar()) catat(ctx.user, 'atur_hapus_pendaftar', n ? `otomatis setelah ${n} bulan` : 'dinonaktifkan');
+        }
         for (const k of PROFIL_KEYS) if (k in b) up.run(k, str(b[k], 300));
       }
       const rows = db.prepare(`SELECT kunci, nilai FROM pengaturan WHERE kunci IN (${ph(PROFIL_KEYS)})`).all(...PROFIL_KEYS);
-      return send(res, 200, Object.fromEntries(rows.map((r) => [r.kunci, r.nilai])));
+      return send(res, 200, { ...Object.fromEntries(rows.map((r) => [r.kunci, r.nilai])), _kedaluwarsa: pendaftarKedaluwarsa(bulanHapusPendaftar()) });
     }
     if (name === 'dashboard') return send(res, 200, dashboard(ctx));
     if (name === 'rapor') return send(res, 200, rapor(q, ctx));
@@ -904,7 +1034,7 @@ function createApp(dbFile, opts = {}) {
   });
   // Menghapus riwayat pesan WhatsApp yang lebih tua dari `hari` hari (sesuai Kebijakan Privasi).
   const purgeWaLog = (hari = WA_LOG_HARI) => Number(db.prepare("DELETE FROM wa_log WHERE dibuat < datetime('now', ?)").run(`-${Math.max(1, hari)} days`).changes);
-  return { server, db, purgeWaLog };
+  return { server, db, purgeWaLog, purgePendaftar };
 }
 
 module.exports = { createApp };
@@ -920,7 +1050,7 @@ if (require.main === module) {
     try { if (jam > 0 && Date.now() - backupTerakhir(backupDir) > (jam - 1) * 3600e3) console.log('Backup otomatis:', backupNow(app.db, backupDir, keep).file); }
     catch (e) { console.error('Backup otomatis gagal:', e.message); }
   };
-  const bersihkan = () => { try { const n = app.purgeWaLog(Number(process.env.WA_LOG_DAYS) || WA_LOG_HARI); if (n) console.log(`Riwayat WhatsApp: ${n} pesan lama dihapus`); } catch (e) { console.error('Pembersihan riwayat gagal:', e.message); } };
+  const bersihkan = () => { try { app.purgePendaftar(); } catch (e) { console.error('Penghapusan pendaftar gagal:', e.message); } try { const n = app.purgeWaLog(Number(process.env.WA_LOG_DAYS) || WA_LOG_HARI); if (n) console.log(`Riwayat WhatsApp: ${n} pesan lama dihapus`); } catch (e) { console.error('Pembersihan riwayat gagal:', e.message); } };
   cek(); bersihkan(); const timer = setInterval(() => { cek(); bersihkan(); }, 3600e3);
   app.server.listen(port, () => console.log(`Administrasi Yayasan berjalan di http://localhost:${port}`));
   const berhenti = () => { clearInterval(timer); app.server.close(() => { try { app.db.close(); } catch { /* sudah tertutup */ } process.exit(0); }); setTimeout(() => process.exit(0), 5000).unref(); };

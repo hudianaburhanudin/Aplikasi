@@ -627,3 +627,98 @@ test('privasi: persetujuan orang tua tercatat, halaman publik tanpa data SK, riw
   assert.strictEqual(purgeWaLog(90), 1);
   assert.deepStrictEqual(db.prepare('SELECT pesan FROM wa_log ORDER BY id').all().map((r) => r.pesan), ['batas', 'baru']);
 });
+
+test('hak pemilik data: permintaan dari wali, pemrosesan admin, salinan PDF, dan jejak audit', async (t) => {
+  const { yys, SMP, MI, kA, kMI, sis, client } = await siapWa(t);
+  const a1 = sis['Andin Pratama'], adikMI = sis['Dewi Anak MI'], lain = sis['Budi Santoso'];
+  await yys('nilai', 'POST', { siswa_id: a1, mapel: 'Matematika', nilai: 88, semester: 'Ganjil' });
+  await yys('pelanggaran', 'POST', { siswa_id: a1, jenis_id: (await yys('jenis_pelanggaran', 'GET', null, SMP)).data[0].id, tanggal: '2026-10-01' });
+  const akun = async (sid, username) => (await yys('wali-akun', 'POST', { siswa_id: sid, username })).data;
+  const w1 = await akun(a1, 'ortu.satu'); await akun(adikMI, 'ortu.satu');               // satu wali, dua anak lintas lembaga
+  const w2 = await akun(lain, 'ortu.dua');
+  const login = async (u, pw) => { const c = client(); await c('login', 'POST', { username: u, password: pw }); await c('password', 'POST', { lama: pw, baru: 'sandiwali123' }); return c; };
+  const wali1 = await login('ortu.satu', w1.password), wali2 = await login('ortu.dua', w2.password);
+
+  // ---- wali mengajukan permintaan ----
+  assert.strictEqual((await wali1('wali/permintaan', 'POST', { jenis: 'aneh' })).status, 400);
+  assert.strictEqual((await wali1('wali/permintaan', 'POST', { jenis: 'salinan', siswa_id: lain })).status, 404);      // bukan anaknya
+  assert.strictEqual((await wali1('wali/permintaan', 'POST', { jenis: 'koreksi', siswa_id: a1 })).status, 400);        // koreksi wajib menyebut data apa
+  const pSalinan = (await wali1('wali/permintaan', 'POST', { jenis: 'salinan', siswa_id: a1 })).data.id;
+  assert.strictEqual((await wali1('wali/permintaan', 'POST', { jenis: 'salinan', siswa_id: a1 })).status, 409);        // sudah ada yang serupa
+  const pKoreksi = (await wali1('wali/permintaan', 'POST', { jenis: 'koreksi', siswa_id: a1, catatan: 'Tanggal lahir salah' })).data.id; void pKoreksi;
+  const pAkun = (await wali1('wali/permintaan', 'POST', { jenis: 'hapus_akun' })).data.id;
+  const pAkun2 = (await wali2('wali/permintaan', 'POST', { jenis: 'hapus_akun' })).data.id;
+  assert.strictEqual((await wali1('wali/permintaan')).data.length, 3);
+  assert.strictEqual((await wali2('wali/permintaan')).data.length, 1);                                                // wali lain tidak melihat milik orang
+
+  // ---- admin: hanya yang berada dalam lingkupnya ----
+  await yys('users', 'POST', { username: 'adminmi', password: 'rahasia1', nama: 'Admin MI', role: 'admin', lembaga_ids: [MI] });
+  await yys('users', 'POST', { username: 'adminsmp', password: 'rahasia1', nama: 'Admin SMP', role: 'admin', lembaga_ids: [SMP] });
+  await yys('users', 'POST', { username: 'stafsmp', password: 'rahasia1', nama: 'Staf SMP', role: 'staf', lembaga_ids: [SMP] });
+  const masuk = async (u) => { const c = client(); await c('login', 'POST', { username: u, password: 'rahasia1' }); await c('password', 'POST', { lama: 'rahasia1', baru: 'rahasia2x' }); return c; };
+  const aSmp = await masuk('adminsmp'), aMi = await masuk('adminmi'), staf = await masuk('stafsmp');
+  assert.strictEqual((await staf('permintaan')).status, 403); assert.strictEqual((await staf('audit')).status, 403);
+  assert.deepStrictEqual((await aSmp('permintaan')).data.map((p) => p.id).sort(), [pSalinan, pKoreksi, pAkun, pAkun2].sort());
+  const idsMi = (await aMi('permintaan')).data.map((p) => p.id); assert.deepStrictEqual(idsMi, [pAkun]);                // akun lintas lembaga terlihat oleh MI juga
+  assert.strictEqual((await yys('dashboard', 'GET', null, SMP)).data.permintaan_baru, 4);
+
+  // ---- salinan data (PDF) ----
+  assert.strictEqual((await aMi(`pdf/salinan?id=${pSalinan}`)).status, 404);                                          // admin MI tak bisa mengambil data siswa SMP
+  assert.strictEqual((await staf(`pdf/salinan?id=${pSalinan}`)).status, 403);
+  const pdf = await aSmp(`pdf/salinan?id=${pSalinan}`); assert.strictEqual(pdf.status, 200); assert.strictEqual(pdf.data.subarray(0, 5).toString(), '%PDF-');
+  assert.strictEqual((await aSmp(`pdf/salinan?id=${pKoreksi}`)).status, 404);                                         // hanya untuk jenis salinan
+
+  // ---- pemrosesan ----
+  const proses = (c, id, body) => c(`permintaan/${id}/proses`, 'POST', body);
+  assert.strictEqual((await proses(aSmp, pKoreksi, { aksi: 'tolak' })).status, 400);                                  // tolak wajib beralasan
+  assert.strictEqual((await proses(aSmp, pKoreksi, { aksi: 'ngawur' })).status, 400);
+  assert.strictEqual((await proses(aMi, pKoreksi, { aksi: 'selesai' })).status, 404);                                 // di luar lingkup
+  assert.strictEqual((await proses(aSmp, pKoreksi, { aksi: 'selesai', catatan: 'Sudah dikoreksi' })).status, 200);
+  assert.strictEqual((await proses(aSmp, pKoreksi, { aksi: 'selesai' })).status, 400);                                // tidak bisa diproses dua kali
+  assert.strictEqual((await proses(aSmp, pSalinan, { aksi: 'tolak', catatan: 'Mohon datang membawa KTP' })).status, 200);
+  const lihat = (await wali1('wali/permintaan')).data;
+  assert.deepStrictEqual(lihat.map((x) => [x.jenis, x.status, x.hasil]).sort(), [['hapus_akun', 'baru', null], ['koreksi', 'selesai', 'Sudah dikoreksi'], ['salinan', 'ditolak', 'Mohon datang membawa KTP']]);
+
+  // ---- hapus akun: akun lintas lembaga hanya bisa oleh admin yayasan; akun satu lembaga oleh adminnya ----
+  assert.strictEqual((await proses(aSmp, pAkun, { aksi: 'hapus_akun' })).status, 403);
+  assert.strictEqual((await proses(aMi, pAkun, { aksi: 'hapus_akun' })).status, 403);
+  assert.strictEqual((await proses(aSmp, pKoreksi, { aksi: 'hapus_akun' })).status, 400);
+  assert.strictEqual((await proses(aSmp, pAkun2, { aksi: 'hapus_akun' })).status, 200);
+  assert.strictEqual((await wali2('wali/anak')).status, 401);                                                         // sesi wali itu langsung mati
+  assert.strictEqual((await client()('login', 'POST', { username: 'ortu.dua', password: 'sandiwali123' })).status, 401);
+  const sisa = (await yys('permintaan')).data.find((p) => p.id === pAkun2); assert.strictEqual(sisa.status, 'selesai'); assert.strictEqual(sisa.wali_username, 'ortu.dua');   // catatan permintaan tetap ada
+  assert.strictEqual((await proses(yys, pAkun, { aksi: 'hapus_akun' })).status, 200);
+  assert.strictEqual((await wali1('wali/anak')).status, 401);
+  assert.strictEqual((await yys('users')).data.some((u) => u.username.startsWith('ortu')), false);
+
+  // ---- jejak audit ----
+  const aud = (await yys('audit')).data.map((x) => x.aksi);
+  for (const a of ['permintaan_data', 'salinan_data', 'tolak_permintaan', 'selesai_permintaan', 'hapus_akun_wali', 'buat_akun_wali', 'tambah_pengguna']) assert.ok(aud.includes(a), a);
+  await yys(`siswa/${a1}`, 'DELETE'); assert.match((await yys('audit')).data[0].detail, /Andin Pratama/);                // penghapusan siswa tercatat siapa/apa
+  assert.ok((await yys('audit')).data.every((x) => x.aktor));
+  void kA; void kMI;
+});
+
+test('hapus pendaftar otomatis: mati secara bawaan, hanya yang tidak menjadi siswa, tercatat', async (t) => {
+  const { yys, SMP, kA } = await siapWa(t);
+  const { db, purgePendaftar } = createApp(':memory:'); void kA;
+  const lembaga = db.prepare("SELECT id FROM lembaga WHERE kode = 'SMP'").get().id;
+  const baris = db.prepare("INSERT INTO pendaftar (lembaga_id, tahun_ajaran, urut, no_daftar, nama, status, dibuat) VALUES (?, '2026/2027', ?, ?, ?, ?, datetime('now', ?))");
+  [['ditolak', '-13 months'], ['cadangan', '-13 months'], ['baru', '-13 months'], ['terverifikasi', '-13 months'], ['diterima', '-13 months'], ['terdaftar', '-13 months'], ['ditolak', '-2 months']]
+    .forEach(([st, umur], i) => baris.run(lembaga, i + 1, 'SMP-2026-000' + (i + 1), 'P' + i, st, umur));
+  assert.strictEqual(purgePendaftar(), 0);                                                                           // bawaan: tidak menghapus apa pun
+  assert.strictEqual(db.prepare('SELECT COUNT(*) n FROM pendaftar').get().n, 7);
+  db.prepare("INSERT INTO pengaturan (kunci, nilai) VALUES ('hapus_pendaftar_bulan', '12')").run();
+  assert.strictEqual(purgePendaftar(), 4);                                                                           // ditolak, cadangan, baru, terverifikasi yang > 12 bulan
+  assert.deepStrictEqual(db.prepare('SELECT status FROM pendaftar ORDER BY id').all().map((r) => r.status), ['diterima', 'terdaftar', 'ditolak']);
+  const a = db.prepare("SELECT aktor, aksi, detail FROM audit WHERE aksi = 'hapus_pendaftar_otomatis'").get(); assert.strictEqual(a.aktor, 'sistem'); assert.match(a.detail, /4 pendaftar/);
+  assert.strictEqual(purgePendaftar(), 0);                                                                           // tidak berulang
+
+  // pengaturan lewat Profil Yayasan: validasi, pratinjau, dan hanya admin yayasan
+  assert.strictEqual((await yys('profil', 'PUT', { hapus_pendaftar_bulan: '-1' })).status, 400);
+  assert.strictEqual((await yys('profil', 'PUT', { hapus_pendaftar_bulan: 'abc' })).status, 400);
+  assert.strictEqual((await yys('profil', 'PUT', { hapus_pendaftar_bulan: '999' })).status, 400);
+  const pr = await yys('profil', 'PUT', { hapus_pendaftar_bulan: '6' }); assert.strictEqual(pr.status, 200); assert.strictEqual(pr.data._kedaluwarsa, 0);
+  assert.ok((await yys('audit')).data.some((x) => x.aksi === 'atur_hapus_pendaftar' && /6 bulan/.test(x.detail)));
+  void SMP;
+});

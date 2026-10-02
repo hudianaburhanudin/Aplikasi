@@ -105,6 +105,15 @@ const MIGRATIONS = [
      SELECT l.id, d.kode, d.nama, d.poin FROM lembaga l CROSS JOIN (${JENIS_DEFAULT.map(([k, n, p]) => `SELECT '${k}' kode, '${n}' nama, ${p} poin`).join(' UNION ALL ')}) d;`,
   // v6: persetujuan orang tua pada pendaftaran online (waktu dicatat)
   `ALTER TABLE pendaftar ADD COLUMN persetujuan TEXT;`,
+  // v7: jejak audit dan permintaan data dari wali (hak pemilik data)
+  `CREATE TABLE audit (id INTEGER PRIMARY KEY, waktu TEXT NOT NULL DEFAULT (datetime('now')), aktor TEXT, aksi TEXT NOT NULL, detail TEXT);
+   CREATE INDEX idx_audit_waktu ON audit(id);
+   CREATE TABLE permintaan_data (
+     id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, wali_nama TEXT, wali_username TEXT,
+     siswa_id INTEGER REFERENCES siswa(id) ON DELETE SET NULL, jenis TEXT NOT NULL, catatan TEXT, status TEXT NOT NULL DEFAULT 'baru',
+     lembaga_ids TEXT, ringkasan TEXT,   -- lingkup lembaga dan nama anak saat permintaan dibuat (tetap ada setelah akun dihapus)
+     dibuat TEXT NOT NULL DEFAULT (datetime('now')), diproses TEXT, diproses_oleh TEXT, hasil TEXT);
+   CREATE INDEX idx_permintaan_status ON permintaan_data(status, id);`,
 ];
 
 function migrate(db) {

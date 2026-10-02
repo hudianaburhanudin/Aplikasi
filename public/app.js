@@ -352,13 +352,15 @@ pages.profil = guard(async () => {
   const d = await api('profil');
   const F = [['nama_yayasan', 'Nama yayasan'], ['sk_pengesahan', 'Nomor SK pengesahan badan hukum'], ['sk_perubahan', 'Nomor SK/SP perubahan terakhir'],
     ['tanggal_sk_perubahan', 'Tanggal SK/SP perubahan', 'date'], ['akta_notaris', 'Akta notaris'], ['alamat', 'Alamat'], ['kecamatan', 'Kecamatan'], ['kabupaten', 'Kabupaten'], ['provinsi', 'Provinsi'],
+    ['hapus_pendaftar_bulan', 'Hapus otomatis pendaftar yang tidak menjadi siswa setelah (bulan). 0 = nonaktif', 'number'],
     ['alamat_kantor', 'PRIVASI · Alamat kantor korespondensi'], ['kontak_email', 'PRIVASI · Email kontak', 'email'], ['kontak_telepon', 'PRIVASI · Telepon/WhatsApp kontak'], ['pejabat_pdp', 'PRIVASI · Nama pejabat/petugas pelindungan data'],
     ['tanggal_berlaku', 'PRIVASI · Tanggal berlaku kebijakan', 'date'], ['penyedia_server', 'PRIVASI · Nama dan lokasi penyedia server'], ['retensi_alumni', 'PRIVASI · Lama simpan data alumni'], ['retensi_pendaftar', 'PRIVASI · Lama simpan pendaftar yang tidak diterima']];
   $('#main').innerHTML = `<h2>Profil Yayasan</h2><p class="empty" style="text-align:left;padding:0 0 12px">Data legalitas (SK) hanya dapat dilihat admin yayasan dan tidak dicetak. Isian berawalan <b>PRIVASI</b> tampil di halaman publik <a href="/privasi" target="_blank">/privasi</a> (Kebijakan Privasi); yang kosong ditandai kuning di sana.</p>
     <form id="pf" class="card" style="max-width:720px;display:grid;gap:12px"><div class="fields">${F.map(([k, l, t]) =>
       `<label class="full">${esc(l)}<input name="${k}" type="${t || 'text'}" value="${esc(d[k])}" maxlength="300"></label>`).join('')}</div>
+    ${Number(d.hapus_pendaftar_bulan) > 0 ? `<p class="empty" style="text-align:left;padding:0">Saat ini <b>${d._kedaluwarsa}</b> pendaftar (ditolak, cadangan, atau belum diproses) lebih lama dari ${d.hapus_pendaftar_bulan} bulan dan akan dihapus otomatis. Pendaftar yang sudah menjadi siswa tidak pernah dihapus.</p>` : ''}
     <div class="actions"><button class="btn primary">Simpan</button></div></form>`;
-  $('#pf').onsubmit = guard(async (e) => { e.preventDefault(); await api('profil', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); toast('Profil yayasan disimpan'); });
+  $('#pf').onsubmit = guard(async (e) => { e.preventDefault(); await api('profil', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); toast('Profil yayasan disimpan'); pages.profil(); });
 });
 
 // ---- dashboard ----
@@ -368,7 +370,7 @@ pages.dashboard = guard(async () => {
   const bars = (rows, label) => { const max = Math.max(1, ...rows.map((r) => r.jumlah)); return rows.map((r) =>
     `<div><span>${esc(label(r))}</span><i style="width:${r.jumlah / max * 100}%"></i><span>${r.jumlah}</span></div>`).join('') || '<p class="empty">Belum ada data.</p>'; };
   $('#main').innerHTML = `<h2>Dashboard</h2><div class="stats">
-    ${[['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pendaftar baru', d.pendaftar_baru], ['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)], ['Tunggakan (lewat jatuh tempo)', rp(d.tunggakan)]]
+    ${[['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pendaftar baru', d.pendaftar_baru], ...(d.permintaan_baru ? [['Permintaan data baru', d.permintaan_baru]] : []), ['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)], ['Tunggakan (lewat jatuh tempo)', rp(d.tunggakan)]]
       .map(([l, n]) => `<div class="card stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('')}</div>
     <div class="grid2"><div class="card"><b>Absensi hari ini</b><p>Hadir ${a.H || 0} · Sakit ${a.S || 0} · Izin ${a.I || 0} · Alpa ${a.A || 0}</p></div>
     ${d.multi ? `<div class="card"><b>Siswa per lembaga</b><div class="bars">${bars(d.per_lembaga, (r) => r.kode)}</div></div>` : ''}
@@ -529,11 +531,43 @@ pages.whatsapp = guard(async () => {
   document.querySelectorAll('.chip').forEach((b) => { b.onclick = () => { $('#wm').value = b.dataset.c; $('#wm').focus(); }; });
 });
 
+// ---- permintaan data (hak pemilik data) & jejak audit ----
+const JENIS_MINTA = { salinan: 'Salinan data anak', koreksi: 'Koreksi data anak', hapus_data: 'Penghapusan data anak', hapus_akun: 'Penghapusan akun wali' };
+pages.permintaan = guard(async () => {
+  const load = guard(async () => {
+    const rows = await api('permintaan');
+    const buka = (r) => ['baru', 'diproses'].includes(r.status);
+    $('#main').innerHTML = `<h2>Permintaan Data</h2><p class="empty" style="text-align:left;padding:0 0 12px">Permintaan wali dari aplikasi wali (menu ⋮ → Data &amp; privasi): salinan, koreksi, atau penghapusan. Verifikasi dulu bahwa pemohon benar wali yang tercatat. Penghapusan data anak yang wajib disimpan (nilai, kelulusan) diputuskan oleh admin dan alasannya ditulis pada jawaban.</p>
+      <div class="tablewrap">${rows.length ? `<table><thead><tr><th>Tanggal (UTC)</th><th>Wali</th><th>Permintaan</th><th>Anak</th><th>Catatan wali</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((r) =>
+        `<tr><td class="nw">${esc(r.dibuat)}</td><td>${esc(r.wali_nama)}<div class="muted" style="color:var(--mut);font-size:12px">${esc(r.wali_username)}</div></td><td>${esc(JENIS_MINTA[r.jenis] || r.jenis)}</td>
+        <td>${esc(r.jenis === 'hapus_akun' ? r.ringkasan : r.anak)}</td><td style="max-width:260px;white-space:pre-wrap">${esc(r.catatan)}</td>
+        <td class="nw"><span class="badge">${esc(r.status)}</span>${r.hasil ? `<div class="muted" style="color:var(--mut);font-size:12px;white-space:pre-wrap;max-width:200px">${esc(r.hasil)}</div>` : ''}</td>
+        <td class="act">${buka(r) ? `${r.jenis === 'salinan' ? `<button class="btn small" data-a="salinan" data-id="${r.id}">Unduh salinan (PDF)</button>` : ''}
+          ${r.jenis === 'hapus_akun' && r.user_id ? `<button class="btn small danger" data-a="hapus_akun" data-id="${r.id}">Hapus akun sekarang</button>` : ''}
+          <button class="btn small" data-a="selesai" data-id="${r.id}">Selesai</button> <button class="btn small danger" data-a="tolak" data-id="${r.id}">Tolak</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada permintaan.</div>'}</div>`;
+    $('#main').onclick = guard(async (e) => {
+      const b = e.target.closest('button[data-a]'); if (!b) return;
+      const r = rows.find((x) => x.id === Number(b.dataset.id)), aksi = b.dataset.a;
+      if (aksi === 'salinan') return download('pdf/salinan?id=' + r.id);
+      const kirim = (body) => async (d) => { await api(`permintaan/${r.id}/proses`, { method: 'POST', body: { ...body, catatan: d.catatan } }); toast('Permintaan diperbarui'); load(); };
+      if (aksi === 'hapus_akun') return openForm('Hapus akun wali ' + r.wali_username, [{ name: 'catatan', label: 'Catatan untuk arsip (opsional)', full: true }], {}, kirim({ aksi }));
+      openForm(aksi === 'tolak' ? 'Tolak permintaan' : 'Tandai selesai', [{ name: 'catatan', label: aksi === 'tolak' ? 'Alasan penolakan (dibaca wali) *' : 'Jawaban untuk wali (opsional)', type: 'textarea', full: true, required: aksi === 'tolak' }], {}, kirim({ aksi }));
+    });
+  });
+  load();
+});
+pages.audit = guard(async () => {
+  const rows = await api('audit');
+  $('#main').innerHTML = `<h2>Jejak Audit</h2><p class="empty" style="text-align:left;padding:0 0 12px">Catatan tindakan penting: penghapusan data, pembuatan dan reset akun, permintaan data, dan penghapusan otomatis. Tidak mencatat siapa yang membuka data. Menampilkan 300 catatan terakhir.</p>
+    <div class="tablewrap">${rows.length ? `<table><thead><tr><th>Waktu (UTC)</th><th>Pelaku</th><th>Tindakan</th><th>Rincian</th></tr></thead><tbody>${rows.map((r) =>
+      `<tr><td class="nw">${esc(r.waktu)}</td><td>${esc(r.aktor)}</td><td class="nw"><span class="badge">${esc(r.aksi)}</span></td><td>${esc(r.detail)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada catatan.</div>'}</div>`;
+});
+
 // ---- shell ----
 const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'], GURU = ['yayasan', 'admin', 'staf', 'guru'];
 const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', GURU], ['pelanggaran', 'Pelanggaran', GURU],
-  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['pengguna', 'Pengguna', ADM],
-  ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']]];
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
+  ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']], ['audit', 'Jejak Audit', ['yayasan']]];
 
 function route() {
   const awal = me.role === 'guru' ? 'absensi' : 'dashboard';

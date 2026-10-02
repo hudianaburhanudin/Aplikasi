@@ -45,6 +45,32 @@ const changePassword = (force) => dialog(force ? 'Buat password baru' : 'Ganti p
   { name: 'baru', label: 'Password baru (min. 8 karakter)', type: 'password', ac: 'new-password' }], { cancel: !force },
 async (d) => { await api('password', { method: 'POST', body: d }); me.must_change = false; toast('Password diganti'); if (force) await start(); });
 
+// ---- data & privasi: hak pemilik data ----
+const JENIS = { salinan: 'Minta salinan data anak', koreksi: 'Minta koreksi data anak', hapus_data: 'Minta penghapusan data anak', hapus_akun: 'Minta hapus akun saya' };
+const STATUS_MINTA = { baru: 'Menunggu', diproses: 'Sedang diproses', selesai: 'Selesai', ditolak: 'Ditolak' };
+async function dataPrivasi() {
+  let riwayat = [];
+  try { riwayat = await api('wali/permintaan'); } catch (e) { toast(e.message, true); return; }
+  const f = $('#dlgForm'), dlg = $('#dlg');
+  f.innerHTML = `<h3>Data &amp; privasi</h3><p class="muted small" style="margin:0">Anda berhak meminta salinan, koreksi, atau penghapusan data. Petugas sekolah akan memverifikasi dan menjawab. <a href="/privasi">Kebijakan Privasi</a></p>
+    <label>Jenis permintaan<select name="jenis">${Object.entries(JENIS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+    <label id="lAnak">Anak<select name="siswa_id">${anak.map((a) => `<option value="${a.id}">${esc(a.nama)} · ${esc(a.lembaga_nama)}</option>`).join('')}</select></label>
+    <label>Catatan (wajib untuk koreksi: data apa yang salah)<textarea name="catatan" rows="3" maxlength="500"></textarea></label>
+    <p class="error" id="dpErr"></p>
+    ${riwayat.length ? `<div><b class="small">Permintaan Anda</b>${riwayat.map((r) => `<div class="item"><div>${esc(JENIS[r.jenis] || r.jenis)}${r.anak ? ' · ' + esc(r.anak) : ''}<div class="s">${esc(tgl(String(r.dibuat).slice(0, 10)))}${r.hasil ? ' · ' + esc(r.hasil) : ''}</div></div><div class="r">${chip(r.status === 'selesai' ? 'lunas' : r.status === 'ditolak' ? 'belum' : 'sebagian', STATUS_MINTA[r.status] || r.status)}</div></div>`).join('')}</div>` : ''}
+    <div class="actions"><button type="button" class="btn" id="dpTutup">Tutup</button><button class="btn primary">Kirim permintaan</button></div>`;
+  const sinkron = () => { $('#lAnak').classList.toggle('hidden', f.jenis.value === 'hapus_akun'); };
+  f.jenis.onchange = sinkron; sinkron();
+  $('#dpTutup').onclick = () => dlg.close(); dlg.oncancel = null;
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(f));
+    if (d.jenis === 'hapus_akun' && !confirm('Akun Anda akan dihapus oleh sekolah dan Anda tidak dapat masuk lagi. Lanjutkan?')) return;
+    try { await api('wali/permintaan', { method: 'POST', body: d }); dlg.close(); toast('Permintaan terkirim. Petugas akan menjawabnya.'); } catch (err) { $('#dpErr').textContent = err.message; }
+  };
+  dlg.showModal();
+}
+
 // ---- render ----
 const chip = (cls, text) => `<span class="chip ${cls}">${esc(text)}</span>`;
 function tagihanChip(t) {
@@ -136,10 +162,11 @@ document.querySelectorAll('#tabs button').forEach((b) => { b.onclick = () => { t
 $('#anak').onchange = (e) => { cur = Number(e.target.value); try { localStorage.setItem('anak', String(cur)); } catch {} loadAnak(); };
 $('#reload').onclick = () => loadAll().then(() => toast('Data diperbarui')).catch((e) => toast(e.message, true));
 $('#menuBtn').onclick = () => {
-  $('#dlgForm').innerHTML = `<h3>${esc(me.nama)}</h3><button type="button" class="btn" id="mPw">Ganti password</button><button type="button" class="btn" id="mOut">Keluar</button><button type="button" class="btn" id="mClose">Tutup</button>`;
+  $('#dlgForm').innerHTML = `<h3>${esc(me.nama)}</h3><button type="button" class="btn" id="mData">Data &amp; privasi</button><button type="button" class="btn" id="mPw">Ganti password</button><button type="button" class="btn" id="mOut">Keluar</button><button type="button" class="btn" id="mClose">Tutup</button>`;
   $('#dlgForm').onsubmit = null; $('#dlg').oncancel = null;
   $('#mClose').onclick = () => $('#dlg').close();
   $('#mPw').onclick = () => { $('#dlg').close(); changePassword(false); };
+  $('#mData').onclick = () => { $('#dlg').close(); dataPrivasi(); };
   $('#mOut').onclick = async () => { await api('logout', { method: 'POST' }).catch(() => {}); $('#dlg').close(); try { localStorage.removeItem('anak'); } catch {} show('login'); };
   $('#dlg').showModal();
 };
