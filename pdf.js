@@ -42,8 +42,29 @@ function wrap(s, maxW, size, bold, maxLines = 4) {
   return lines;
 }
 
+// Ukuran gambar JPEG (penanda SOF), untuk menyisipkan logo apa adanya (DCTDecode)
+function jpegSize(b) {
+  for (let i = 2; i + 9 < b.length;) {
+    if (b[i] !== 0xff) return null;
+    const m = b[i + 1];
+    if (m >= 0xc0 && m <= 0xc3) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) };
+    i += 2 + b.readUInt16BE(i + 2);
+  }
+  return null;
+}
+
 class Pdf {
-  constructor(w, h) { this.w = w; this.h = h; this.pages = []; this.addPage(); }
+  constructor(w, h) { this.w = w; this.h = h; this.pages = []; this.images = []; this.addPage(); }
+  // Gambar JPEG setinggi h pt; lebar mengikuti rasio. Mengembalikan lebar yang dipakai (0 bila tidak ada gambar).
+  image(jpeg, x, y, h) {
+    const sz = jpeg && jpegSize(jpeg);
+    if (!sz) return 0;
+    let idx = this.images.findIndex((im) => im.buf === jpeg);
+    if (idx < 0) { this.images.push({ buf: jpeg, ...sz }); idx = this.images.length - 1; }
+    const w = h * sz.w / sz.h;
+    this.ops.push(`q ${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${x.toFixed(2)} ${(this.h - y - h).toFixed(2)} cm /Im${idx} Do Q`);
+    return w;
+  }
   addPage() { this.ops = []; this.pages.push(this.ops); }
   // y diukur dari atas halaman; (x, y) = baseline teks
   text(x, y, s, size = 10, { bold = false, gray = 0, align = 'left', w = 0 } = {}) {
@@ -65,13 +86,20 @@ class Pdf {
     obj(2, `<< /Type /Pages /Count ${n} /Kids [${this.pages.map((_, i) => `${5 + 2 * i} 0 R`).join(' ')}] >>`);
     obj(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
     obj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+    const imgBase = 5 + 2 * n;
+    const xo = this.images.length ? ` /XObject << ${this.images.map((_, k) => `/Im${k} ${imgBase + k} 0 R`).join(' ')} >>` : '';
     this.pages.forEach((ops, i) => {
-      obj(5 + 2 * i, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.w} ${this.h}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${6 + 2 * i} 0 R >>`);
+      obj(5 + 2 * i, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.w} ${this.h}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xo} >> /Contents ${6 + 2 * i} 0 R >>`);
       const data = zlib.deflateSync(Buffer.from(ops.join('\n'), 'latin1'));
       offs[6 + 2 * i] = len;
       out(`${6 + 2 * i} 0 obj\n<< /Length ${data.length} /Filter /FlateDecode >>\nstream\n`); out(data); out('\nendstream\nendobj\n');
     });
-    const total = 5 + 2 * n, xref = len;
+    this.images.forEach((im, k) => {
+      offs[imgBase + k] = len;
+      out(`${imgBase + k} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.buf.length} >>\nstream\n`);
+      out(im.buf); out('\nendstream\nendobj\n');
+    });
+    const total = imgBase + this.images.length, xref = len;
     out(`xref\n0 ${total}\n0000000000 65535 f \n`);
     for (let i = 1; i < total; i++) out(String(offs[i]).padStart(10, '0') + ' 00000 n \n');
     out(`trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
@@ -82,7 +110,7 @@ class Pdf {
 const fmtDate = (d = new Date()) => d.toISOString().slice(0, 10);
 
 // Tabel multi-halaman (A4 landscape). rows: array of array (angka rata kanan).
-function tablePdf({ title, subtitle, headers, rows, footer }) {
+function tablePdf({ title, subtitle, headers, rows, footer, logo }) {
   const M = 36, size = 9, lh = 12, pad = 4;
   const pdf = new Pdf(842, 595), avail = pdf.w - 2 * M;
   let nat = headers.map((h, c) => Math.min(260, Math.max(width(h, size, true), ...rows.slice(0, 200).map((r) => width(r[c], size))) + 2 * pad + 2));
@@ -91,8 +119,9 @@ function tablePdf({ title, subtitle, headers, rows, footer }) {
   const bottom = pdf.h - M - 14;
   let y;
   const head = () => {
-    pdf.text(M, M + 12, title, 15, { bold: true });
-    pdf.text(M, M + 27, subtitle, 9, { gray: 0.4 });
+    const lw = pdf.image(logo, M, M - 4, 34), tx = M + (lw ? lw + 10 : 0);
+    pdf.text(tx, M + 12, title, 15, { bold: true });
+    pdf.text(tx, M + 27, subtitle, 9, { gray: 0.4 });
     y = M + 40;
     pdf.rect(M, y, cw.reduce((a, b) => a + b, 0), lh + 2 * pad - 2, 0.9);
     let x = M;
@@ -126,8 +155,9 @@ function tablePdf({ title, subtitle, headers, rows, footer }) {
 }
 
 // Rapor satu siswa (A4 portrait)
-function raporPdf({ siswa, semester, nilai, absensi }) {
+function raporPdf({ siswa, semester, nilai, absensi }, logo) {
   const M = 50, pdf = new Pdf(595, 842), W = pdf.w - 2 * M;
+  pdf.image(logo, M, 26, 62);
   pdf.text(M, 40, 'YAYASAN MIFTAHUL ULUMILLAH', 9, { gray: 0.4, align: 'center', w: W });
   pdf.text(M, 56, (siswa.lembaga_nama || '').toUpperCase(), 13, { bold: true, align: 'center', w: W });
   pdf.text(M, 76, 'LAPORAN HASIL BELAJAR', 14, { bold: true, align: 'center', w: W });
@@ -164,13 +194,14 @@ function raporPdf({ siswa, semester, nilai, absensi }) {
 }
 
 // Kuitansi pembayaran
-function kuitansiPdf(p, rp) {
+function kuitansiPdf(p, rp, logo) {
   const M = 36, pdf = new Pdf(595, 330), W = pdf.w - 2 * M;
   pdf.line(M, M, M + W, M, 0, 1.5);
-  pdf.text(M, M + 26, 'KUITANSI PEMBAYARAN', 16, { bold: true });
-  pdf.text(M, M + 52, `${p.lembaga_nama || ''} - Yayasan Miftahul Ulumillah`, 9, { gray: 0.4 });
+  const lw = pdf.image(logo, M, M + 8, 40), tx = M + (lw ? lw + 10 : 0);
+  pdf.text(tx, M + 26, 'KUITANSI PEMBAYARAN', 16, { bold: true });
+  pdf.text(tx, M + 42, `${p.lembaga_nama || ''} - Yayasan Miftahul Ulumillah`, 9, { gray: 0.4 });
   pdf.text(M, M + 26, `No. ${String(p.id).padStart(6, '0')}`, 10, { align: 'right', w: W });
-  pdf.line(M, M + 38, M + W, M + 38, 0, 0.5);
+  pdf.line(M, M + 54, M + W, M + 54, 0, 0.5);
   let y = M + 74;
   const rows = [['Telah terima dari', `${p.siswa_nama}${p.nis ? ' (NIS ' + p.nis + ')' : ''}`], ['Kelas', p.kelas_nama || '-'],
     ['Untuk pembayaran', p.jenis + (p.bulan ? ' - ' + p.bulan : '')], ['Keterangan', p.keterangan || '-'], ['Tanggal', p.tanggal]];

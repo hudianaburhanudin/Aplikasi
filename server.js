@@ -7,6 +7,18 @@ const { buildXlsx } = require('./xlsx');
 const { tablePdf, raporPdf, kuitansiPdf } = require('./pdf');
 
 const rp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+// Logo per lembaga ada di public/logo/<kode>.png (web) dan public/logo/pdf/<kode>.jpg (kop PDF).
+// Bila file lembaga belum ada, dipakai logo cadangan: madin-* -> madin -> yayasan -> ponpes.
+const LOGO_DIR = path.join(__dirname, 'public', 'logo');
+const logoChain = (kode) => { const k = String(kode || 'yayasan').toLowerCase(); return [k, k.startsWith('madin') ? 'madin' : null, 'yayasan', 'ponpes'].filter(Boolean); };
+function logoFile(kode, ext) {
+  for (const k of logoChain(kode)) {
+    const f = path.join(LOGO_DIR, ext === 'jpg' ? 'pdf' : '', `${k}.${ext}`);
+    try { if (fs.existsSync(f)) return f; } catch { /* abaikan */ }
+  }
+  return null;
+}
+function logoJpeg(kode) { const f = logoFile(kode, 'jpg'); try { return f ? fs.readFileSync(f) : null; } catch { return null; } }
 const todayWib = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
 
 // Tagihan dianggap terbayar dari pembayaran dengan siswa, jenis, dan periode yang sama.
@@ -391,7 +403,7 @@ function createApp(dbFile) {
 
   // ---- API untuk wali murid (hanya baca, hanya anak yang tertaut) ----
   function waliApi(parts, ctx) {
-    const anak = () => db.prepare(`SELECT s.id, s.nis, s.nama, s.jk, s.status, s.lembaga_id, l.nama lembaga_nama, k.nama kelas_nama, g.nama wali_kelas
+    const anak = () => db.prepare(`SELECT s.id, s.nis, s.nama, s.jk, s.status, s.lembaga_id, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama, g.nama wali_kelas
       FROM wali_siswa w JOIN siswa s ON s.id = w.siswa_id JOIN lembaga l ON l.id = s.lembaga_id
       LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN guru g ON g.id = k.wali_guru_id
       WHERE w.user_id = ? ORDER BY s.nama`).all(ctx.user.id);
@@ -541,7 +553,7 @@ function createApp(dbFile) {
 
   function rapor(q, ctx) {
     if (!q.siswa_id) throw new HttpError(400, 'siswa_id wajib diisi');
-    const siswa = db.prepare(`SELECT s.*, l.nama lembaga_nama, k.nama kelas_nama, g.nama wali_kelas FROM siswa s
+    const siswa = db.prepare(`SELECT s.*, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama, g.nama wali_kelas FROM siswa s
       JOIN lembaga l ON l.id = s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN guru g ON g.id = k.wali_guru_id WHERE s.id = ?`).get(q.siswa_id);
     if (!siswa || !ctx.scope.ids.includes(siswa.lembaga_id)) throw new HttpError(404, 'Siswa tidak ditemukan');
     const sem = q.semester || null;
@@ -708,8 +720,8 @@ function createApp(dbFile) {
         res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${fname}"` });
         return res.end(buf);
       };
-      if (name === 'pdf' && key === 'rapor') return file(raporPdf(rapor(q, ctx)), 'application/pdf', `rapor-${q.siswa_id}.pdf`);
-      if (name === 'pdf' && key === 'kuitansi') return file(kuitansiPdf(crud(RES.pembayaran, 'GET', Number(q.id), {}, {}, ctx), rp), 'application/pdf', `kuitansi-${q.id}.pdf`);
+      if (name === 'pdf' && key === 'rapor') { const r = rapor(q, ctx); return file(raporPdf(r, logoJpeg(r.siswa.lembaga_kode)), 'application/pdf', `rapor-${q.siswa_id}.pdf`); }
+      if (name === 'pdf' && key === 'kuitansi') { const pb = crud(RES.pembayaran, 'GET', Number(q.id), {}, {}, ctx); return file(kuitansiPdf(pb, rp, logoJpeg(pb.lembaga_kode)), 'application/pdf', `kuitansi-${q.id}.pdf`); }
       const ex = EXPORTS[key];
       if (!ex) throw new HttpError(404, 'Data ekspor tidak ditemukan');
       const data = key === 'rekap-absensi' ? rekapAbsensi(q, ctx) : list(RES[key], q, ctx);
@@ -724,7 +736,8 @@ function createApp(dbFile) {
       const money = ex[1].findIndex((c) => c[1] === 'jumlah' && key === 'pembayaran');
       if (money >= 0) rows.forEach((r) => { r[money] = rp(r[money]); });
       const cols = ex[1].map((c, i) => i).filter((i) => ctx.scope.ids.length > 1 || ex[1][i][1] !== 'lembaga_kode');
-      return file(tablePdf({ title: ex[0], subtitle: sub, headers: cols.map((i) => ex[1][i][0]), rows: rows.map((r) => cols.map((i) => r[i])), footer: total }),
+      const logo = logoJpeg(ctx.scope.target ? ctx.user.lembagas.find((l) => l.id === ctx.scope.target).kode : 'yayasan');
+      return file(tablePdf({ title: ex[0], subtitle: sub, headers: cols.map((i) => ex[1][i][0]), rows: rows.map((r) => cols.map((i) => r[i])), footer: total, logo }),
         'application/pdf', `${key}-${today}.pdf`);
     }
     if (name === 'wali') return send(res, 200, waliApi(parts, ctx));
@@ -749,6 +762,13 @@ function createApp(dbFile) {
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname.startsWith('/api/')) return await api(req, res, url);
+      const lg = /^\/logo\/([a-z0-9-]+)\.png$/.exec(url.pathname);
+      if (lg) {
+        const f = logoFile(lg[1], 'png');
+        if (!f) { res.writeHead(404); return res.end('Tidak ditemukan'); }
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', ...SEC });
+        return fs.createReadStream(f).pipe(res);
+      }
       const rel = url.pathname === '/' ? 'index.html' : url.pathname === '/daftar' ? 'daftar.html' : url.pathname === '/wali' ? 'wali.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
       const file = path.join(PUBLIC_DIR, rel);
       if (!file.startsWith(PUBLIC_DIR + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
