@@ -499,7 +499,7 @@ Kalau Anda wali kelas, nama kelas boleh dilewati.`;
     try {
       let r;
       if (p === 'meta') {
-        r = await f(`https://graph.facebook.com/v21.0/${ENV.WA_PHONE_NUMBER_ID}/messages`, { method: 'POST', signal: ctl && ctl.signal,
+        r = await f(`https://graph.facebook.com/${ENV.WA_GRAPH_VERSION || 'v23.0'}/${ENV.WA_PHONE_NUMBER_ID}/messages`, { method: 'POST', signal: ctl && ctl.signal,
           headers: { Authorization: `Bearer ${ENV.WA_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ messaging_product: 'whatsapp', to: ke, type: 'text', text: { preview_url: false, body: teks } }) });
       } else if (p === 'fonnte') {

@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { openDb, hashPassword, verifyPassword, seedJenis } = require('./db');
 const { createWa, waNorm } = require('./wa');
+const { backupNow, backupTerakhir } = require('./backup-lib');
 const { buildXlsx } = require('./xlsx');
 const { tablePdf, raporPdf, kuitansiPdf } = require('./pdf');
 
@@ -870,6 +871,7 @@ function createApp(dbFile, opts = {}) {
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
+      if (url.pathname === '/healthz') { db.prepare('SELECT 1').get(); return send(res, 200, { ok: true }); }   // untuk Docker/pemantau uptime
       if (url.pathname.startsWith('/api/')) return await api(req, res, url);
       const lg = /^\/logo\/([a-z0-9-]+)\.png$/.exec(url.pathname);
       if (lg) {
@@ -901,5 +903,16 @@ module.exports = { createApp };
 if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;
   const file = process.env.DB_FILE || path.join(__dirname, 'data', 'sekolah.db');
-  createApp(file).server.listen(port, () => console.log(`Administrasi Yayasan berjalan di http://localhost:${port}`));
+  const app = createApp(file);
+  const backupDir = process.env.BACKUP_DIR || path.join(path.dirname(file), 'backup');
+  const keep = Number(process.env.BACKUP_KEEP) || 14, jam = Number(process.env.BACKUP_EVERY_HOURS ?? 24);
+  // Backup otomatis: bila backup terakhir lebih tua dari (jam - 1) jam. BACKUP_EVERY_HOURS=0 mematikannya.
+  const cek = () => {
+    try { if (jam > 0 && Date.now() - backupTerakhir(backupDir) > (jam - 1) * 3600e3) console.log('Backup otomatis:', backupNow(app.db, backupDir, keep).file); }
+    catch (e) { console.error('Backup otomatis gagal:', e.message); }
+  };
+  cek(); const timer = setInterval(cek, 3600e3);
+  app.server.listen(port, () => console.log(`Administrasi Yayasan berjalan di http://localhost:${port}`));
+  const berhenti = () => { clearInterval(timer); app.server.close(() => { try { app.db.close(); } catch { /* sudah tertutup */ } process.exit(0); }); setTimeout(() => process.exit(0), 5000).unref(); };
+  process.on('SIGTERM', berhenti); process.on('SIGINT', berhenti);
 }

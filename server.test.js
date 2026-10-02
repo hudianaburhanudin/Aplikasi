@@ -545,7 +545,7 @@ test('WA: webhook Meta - tanda tangan, nomor, duplikat, kedaluwarsa, dan balasan
   let r = await post(raw1, { 'x-hub-signature-256': sig(raw1) }); assert.strictEqual(r.status, 200);
   const rows = (await yys(`absensi?kelas_id=${kA}&tanggal=${tgl}`, 'GET', null, SMP)).data; assert.deepStrictEqual(Object.fromEntries(rows.map((x) => [x.nama, x.status])), { 'Andin Pratama': 'S', 'Andini Putri': 'H', 'Budi Santoso': 'H', 'Citra Dewi': 'H' });
   assert.strictEqual(kirim.length, 1);
-  assert.strictEqual(kirim[0].url, 'https://graph.facebook.com/v21.0/123/messages'); assert.strictEqual(kirim[0].auth, 'Bearer tok');
+  assert.strictEqual(kirim[0].url, 'https://graph.facebook.com/v23.0/123/messages'); assert.strictEqual(kirim[0].auth, 'Bearer tok');
   assert.strictEqual(kirim[0].body.to, '6281234567001'); assert.match(kirim[0].body.text.body, /Absensi VII-A/);
 
   // Meta mengirim ulang pesan yang sama: tidak diproses dua kali
@@ -577,4 +577,21 @@ test('WA: webhook Meta - tanda tangan, nomor, duplikat, kedaluwarsa, dan balasan
   assert.strictEqual(kirim.length, n0 + 1); assert.strictEqual(kirim[n0].url, 'https://api.fonnte.com/send'); assert.strictEqual(kirim[n0].auth, 'ft'); assert.strictEqual(kirim[n0].body.target, '6281234567001');
   assert.strictEqual((await yys(`absensi?kelas_id=${kA}&tanggal=${tgl}`, 'GET', null, SMP)).data.find((x) => x.nama === 'Budi Santoso').status, 'I');
   void kirim;
+});
+
+test('backup otomatis: salinan konsisten dan rotasi', () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const { backupNow, backupTerakhir, daftar } = require('./backup-lib');
+  const { server, db } = createApp(':memory:'); void server;
+  db.prepare("INSERT INTO guru (lembaga_id, nama) VALUES (1, 'Contoh Guru')").run();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bk-'));
+  assert.strictEqual(backupTerakhir(dir), 0);
+  for (let i = 0; i < 5; i++) backupNow(db, dir, 3, new Date(Date.UTC(2026, 9, 1 + i, 2, 0, 0)));
+  assert.deepStrictEqual(daftar(dir), ['sekolah-20261005-020000.db', 'sekolah-20261004-020000.db', 'sekolah-20261003-020000.db']);   // hanya 3 terbaru
+  assert.ok(backupTerakhir(dir) > 0);
+  const { DatabaseSync } = require('node:sqlite');
+  const salinan = new DatabaseSync(path.join(dir, daftar(dir)[0]));
+  assert.strictEqual(salinan.prepare('SELECT nama FROM guru').get().nama, 'Contoh Guru');            // isi database ikut tersalin
+  assert.strictEqual(salinan.prepare('SELECT COUNT(*) n FROM lembaga').get().n, 7);
+  fs.rmSync(dir, { recursive: true });
 });

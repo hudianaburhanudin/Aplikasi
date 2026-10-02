@@ -40,6 +40,9 @@ Gateway tidak resmi (Fonnte, WAHA) lebih mudah disiapkan dan dapat berada di gru
 Webhook diamankan tanda tangan (Meta) atau token (lainnya), menolak pesan ganda dan antrean lama, dan membatasi laju.
 Format webhook tiap penyedia perlu diuji dengan akun Anda sendiri saat penyambungan pertama.
 
+## Deploy
+Panduan lengkap: **`DEPLOY.md`** (VPS + Docker + HTTPS otomatis + backup) dan **`META-WHATSAPP.md`** (menyambungkan WhatsApp Cloud API).
+
 ## Menjalankan
 ```bash
 npm start            # http://localhost:3000
@@ -63,4 +66,4 @@ Skema database bermigrasi otomatis (versi tersimpan di `PRAGMA user_version`).
 1. ✅ Fondasi multi-lembaga, peran, tahun ajaran
 2. ✅ Pendaftaran online (PPDB) → seleksi → siswa, kenaikan kelas, kelulusan/alumni
 3. ✅ Portal wali murid (PWA). Berikutnya: notifikasi push dan pembungkus toko (lihat `mobile/README.md`)
-4. Deploy VPS (Docker, HTTPS, backup otomatis) — wajib sebelum dipakai wali
+4. ✅ Paket deploy (Docker + HTTPS otomatis + backup otomatis) dan panduan Meta WhatsApp — lihat `DEPLOY.md`
