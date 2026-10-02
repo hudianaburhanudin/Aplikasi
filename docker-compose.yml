@@ -1,0 +1,31 @@
+# Menjalankan aplikasi + HTTPS otomatis (Caddy). Lihat DEPLOY.md.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "1"          # IP pengunjung dibaca dari Caddy (batas laju & cookie Secure)
+    volumes:
+      - data:/data              # database + backup otomatis (/data/backup)
+    expose:
+      - "3000"
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?isi DOMAIN di file .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # sertifikat HTTPS
+      - caddy_config:/config
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f6b4f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Wali MU">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/favicon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="/wali.css">
+<title>Wali Murid - Miftahul Ulum</title>
+</head>
+<body>
+<div id="boot" class="center muted">Memuat…</div>
+
+<section id="login" class="center hidden">
+  <form id="loginForm" class="panel">
+    <img src="/logo/yayasan.png" alt="Logo Yayasan Miftahul Ulumillah" width="88" height="88" class="logo">
+    <h1>Wali Murid</h1>
+    <p class="muted">Yayasan Miftahul Ulumillah</p>
+    <label>Username / No. HP <input name="username" autocomplete="username" inputmode="text" autocapitalize="none" required></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <p class="error" id="loginErr"></p>
+    <button class="btn primary">Masuk</button>
+    <p class="muted small">Belum punya akun? Hubungi tata usaha lembaga tempat anak Anda belajar.</p>
+    <p class="muted small">Dengan masuk, Anda menggunakan akun wali murid yang dibuat oleh sekolah. Data anak Anda hanya dapat dilihat oleh Anda dan petugas lembaga terkait. Baca <a href="/privasi">Kebijakan Privasi</a> kami.</p>
+  </form>
+</section>
+
+<section id="app" class="hidden">
+  <header>
+    <div class="top">
+      <div><div class="small">Wali Murid</div><b id="who"></b></div>
+      <div class="row">
+        <button class="icon" id="reload" aria-label="Muat ulang">⟳</button>
+        <button class="icon" id="menuBtn" aria-label="Menu">⋮</button>
+      </div>
+    </div>
+    <select id="anak" class="hidden" aria-label="Pilih anak"></select>
+  </header>
+  <main id="view"></main>
+  <nav id="tabs">
+    <button data-t="beranda"><span>🏠</span>Beranda</button>
+    <button data-t="nilai"><span>📝</span>Nilai</button>
+    <button data-t="absensi"><span>📅</span>Absensi</button>
+    <button data-t="tagihan"><span>💳</span>Tagihan</button>
+    <button data-t="berita"><span>📢</span>Info</button>
+  </nav>
+</section>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+<div id="toast" class="toast hidden"></div>
+<script src="/wali.js"></script>
+</body>
+</html>
