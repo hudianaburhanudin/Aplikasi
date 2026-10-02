@@ -154,7 +154,7 @@ test('PPDB online sampai kelulusan', async (t) => {
   const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
   const id = (k) => me.lembagas.find((l) => l.kode === k).id;
   const [SMP, MI] = [id('SMP'), id('MI')];
-  const form = { lembaga_id: SMP, nama: 'Calon Siswa', jk: 'L', tgl_lahir: '2014-05-10', telepon: '08123', nama_ayah: 'Pak Calon', asal_sekolah: 'SD 1' };
+  const form = { lembaga_id: SMP, nama: 'Calon Siswa', jk: 'L', tgl_lahir: '2014-05-10', telepon: '08123', nama_ayah: 'Pak Calon', asal_sekolah: 'SD 1', setuju: 'on' };
 
   // pendaftaran ditutup secara default
   assert.deepStrictEqual((await pub('public/lembaga')).data.lembaga, []);
@@ -166,7 +166,7 @@ test('PPDB online sampai kelulusan', async (t) => {
   assert.strictEqual(pl.tahun_ajaran, '2026/2027');
 
   // validasi & anti-spam
-  for (const bad of [{ nama: '' }, { jk: 'X' }, { tgl_lahir: '31-12-2014' }, { telepon: '' }, { nama_ayah: '' }]) {
+  for (const bad of [{ nama: '' }, { jk: 'X' }, { tgl_lahir: '31-12-2014' }, { telepon: '' }, { nama_ayah: '' }, { setuju: undefined }, { setuju: 'off' }]) {
     assert.strictEqual((await pub('public/daftar', 'POST', { ...form, ...bad })).status, 400, JSON.stringify(bad));
   }
   assert.strictEqual((await pub('public/daftar', 'POST', { ...form, website: 'spam.com' })).data.no_daftar, 'OK'); // honeypot
@@ -594,4 +594,36 @@ test('backup otomatis: salinan konsisten dan rotasi', () => {
   assert.strictEqual(salinan.prepare('SELECT nama FROM guru').get().nama, 'Contoh Guru');            // isi database ikut tersalin
   assert.strictEqual(salinan.prepare('SELECT COUNT(*) n FROM lembaga').get().n, 7);
   fs.rmSync(dir, { recursive: true });
+});
+
+test('privasi: persetujuan orang tua tercatat, halaman publik tanpa data SK, riwayat WA dibersihkan', async (t) => {
+  const { client, base } = await boot(t);
+  const yys = client(), pub = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const SMP = me.lembagas.find((l) => l.kode === 'SMP').id;
+  await yys(`lembaga/${SMP}`, 'PUT', { ppdb_buka: 1 });
+  const form = { lembaga_id: SMP, nama: 'Calon', jk: 'L', tgl_lahir: '2014-05-10', telepon: '08123', nama_ayah: 'Pak Calon' };
+  assert.strictEqual((await pub('public/daftar', 'POST', form)).status, 400);                         // tanpa persetujuan ditolak
+  assert.match((await pub('public/daftar', 'POST', form)).data.error, /Persetujuan/);
+  const ok = await pub('public/daftar', 'POST', { ...form, setuju: 'on' }); assert.strictEqual(ok.status, 200);
+  const row = (await yys('pendaftar', 'GET', null, SMP)).data[0];
+  assert.match(row.persetujuan, /^\d{4}-\d{2}-\d{2}T/);                                              // waktu persetujuan tersimpan
+  const manual = (await yys('pendaftar', 'POST', { nama: 'Datang Langsung' }, SMP)).data.id;          // input petugas: tanpa persetujuan online
+  assert.strictEqual((await yys('pendaftar/' + manual, 'GET')).data.persetujuan, null);
+
+  // halaman privasi: hanya data kontak; data SK tidak pernah ikut
+  assert.deepStrictEqual((await pub('public/privasi')).data, { nama_yayasan: 'Yayasan Miftahul Ulumillah' });   // belum diisi -> kosong
+  await yys('profil', 'PUT', { kontak_email: 'privasi@contoh.id', pejabat_pdp: 'Siti', alamat: 'Jl. Rahasia SK', sk_pengesahan: 'AHU-RAHASIA' });
+  const pv = (await pub('public/privasi')).data;
+  assert.strictEqual(pv.kontak_email, 'privasi@contoh.id'); assert.strictEqual(pv.pejabat_pdp, 'Siti');
+  assert.ok(!JSON.stringify(pv).includes('AHU') && !JSON.stringify(pv).includes('Rahasia'));
+  const page = await fetch(base.replace('/api/', '/privasi')); assert.strictEqual(page.status, 200); assert.match(await page.text(), /Kebijakan Privasi/);
+  assert.strictEqual((await fetch(base.replace('/api/', '/privasi.js'))).status, 200);
+  assert.strictEqual((await fetch(base.replace('/api/', '/daftar'))).status, 200);
+
+  // riwayat WhatsApp: lebih dari 90 hari dihapus otomatis, yang baru tetap
+  const { db, purgeWaLog } = createApp(':memory:');
+  db.prepare("INSERT INTO wa_log (pesan, status, dibuat) VALUES ('lama', 'ok', datetime('now', '-91 days')), ('batas', 'ok', datetime('now', '-89 days')), ('baru', 'ok', datetime('now'))").run();
+  assert.strictEqual(purgeWaLog(90), 1);
+  assert.deepStrictEqual(db.prepare('SELECT pesan FROM wa_log ORDER BY id').all().map((r) => r.pesan), ['batas', 'baru']);
 });

@@ -103,6 +103,8 @@ const MIGRATIONS = [
    CREATE INDEX idx_wa_log_user ON wa_log(user_id, id);
    INSERT INTO jenis_pelanggaran (lembaga_id, kode, nama, poin)
      SELECT l.id, d.kode, d.nama, d.poin FROM lembaga l CROSS JOIN (${JENIS_DEFAULT.map(([k, n, p]) => `SELECT '${k}' kode, '${n}' nama, ${p} poin`).join(' UNION ALL ')}) d;`,
+  // v6: persetujuan orang tua pada pendaftaran online (waktu dicatat)
+  `ALTER TABLE pendaftar ADD COLUMN persetujuan TEXT;`,
 ];
 
 function migrate(db) {

@@ -1,6 +1,6 @@
 // Service worker portal wali: hanya menyimpan cangkang aplikasi (HTML/JS/CSS/ikon).
 // Data pribadi dari /api TIDAK pernah disimpan di cache.
-const CACHE = 'wali-v5';
+const CACHE = 'wali-v6';
 const SHELL = ['/wali', '/wali.css', '/wali.js', '/manifest.webmanifest', '/icons/icon-192.png', '/logo/yayasan.png'];
 
 self.addEventListener('install', (e) => {

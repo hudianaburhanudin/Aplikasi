@@ -134,7 +134,9 @@ const ROLES = ['yayasan', 'admin', 'staf', 'guru']; // 'wali' dikelola lewat /ap
 const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran']);
 const GURU_BACA_SAJA = new Set(['kelas', 'siswa', 'jenis_pelanggaran']);
 const MIN_PW = 8;
-const PROFIL_KEYS = ['nama_yayasan', 'sk_pengesahan', 'sk_perubahan', 'tanggal_sk_perubahan', 'akta_notaris', 'alamat', 'kecamatan', 'kabupaten', 'provinsi'];
+const PROFIL_PRIVASI = ['alamat_kantor', 'kontak_email', 'kontak_telepon', 'pejabat_pdp', 'tanggal_berlaku', 'penyedia_server', 'retensi_alumni', 'retensi_pendaftar'];   // tampil di halaman publik /privasi
+const PROFIL_KEYS = ['nama_yayasan', 'sk_pengesahan', 'sk_perubahan', 'tanggal_sk_perubahan', 'akta_notaris', 'alamat', 'kecamatan', 'kabupaten', 'provinsi', ...PROFIL_PRIVASI];
+const WA_LOG_HARI = 90;
 const PW_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
 const genPassword = () => Array.from({ length: 10 }, () => PW_CHARS[crypto.randomInt(PW_CHARS.length)]).join('');
 const normPhone = (v) => { const d = String(v || '').replace(/\D/g, ''); return d.startsWith('62') ? '0' + d.slice(2) : d; };
@@ -324,7 +326,8 @@ function createApp(dbFile, opts = {}) {
       if (!d.tgl_lahir || !isDate(d.tgl_lahir)) throw new HttpError(400, 'Tanggal lahir tidak valid');
       if (!d.telepon) throw new HttpError(400, 'Nomor telepon/WhatsApp wajib diisi');
       if (!d.nama_ayah && !d.nama_ibu) throw new HttpError(400, 'Nama ayah atau ibu wajib diisi');
-      d.lembaga_id = l.id;
+      if (!['on', 'true', '1', true, 1].includes(b.setuju)) throw new HttpError(400, 'Persetujuan orang tua/wali wajib dicentang');
+      d.lembaga_id = l.id; d.persetujuan = new Date().toISOString();
       const ta = activeTahun();
       if (ta && db.prepare('SELECT 1 FROM pendaftar WHERE lembaga_id = ? AND tahun_ajaran = ? AND lower(nama) = lower(?) AND tgl_lahir = ?').get(l.id, ta, d.nama, d.tgl_lahir)) {
         throw new HttpError(409, 'Calon siswa ini sudah terdaftar. Gunakan menu cek status.');
@@ -333,6 +336,10 @@ function createApp(dbFile, opts = {}) {
       const keys = Object.keys(d);
       db.prepare(`INSERT INTO pendaftar (${keys.join(',')}) VALUES (${ph(keys)})`).run(...keys.map((k) => d[k]));
       return send(res, 200, { no_daftar: d.no_daftar, nama: d.nama, lembaga: l.nama });
+    }
+    if (what === 'privasi' && method === 'GET') {                       // hanya data kontak kebijakan privasi; data SK tidak ikut
+      const rows = db.prepare(`SELECT kunci, nilai FROM pengaturan WHERE kunci IN (${ph(PROFIL_PRIVASI)})`).all(...PROFIL_PRIVASI);
+      return send(res, 200, { nama_yayasan: 'Yayasan Miftahul Ulumillah', ...Object.fromEntries(rows.filter((r) => r.nilai).map((r) => [r.kunci, r.nilai])) });
     }
     if (what === 'status' && method === 'POST') {
       if (limited('status', req, 30, 3600e3)) throw new HttpError(429, 'Terlalu banyak percobaan, coba lagi nanti');
@@ -880,7 +887,7 @@ function createApp(dbFile, opts = {}) {
         res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', ...SEC });
         return fs.createReadStream(f).pipe(res);
       }
-      const rel = url.pathname === '/' ? 'index.html' : url.pathname === '/daftar' ? 'daftar.html' : url.pathname === '/wali' ? 'wali.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
+      const rel = url.pathname === '/' ? 'index.html' : url.pathname === '/daftar' ? 'daftar.html' : url.pathname === '/wali' ? 'wali.html' : url.pathname === '/privasi' ? 'privasi.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
       const file = path.join(PUBLIC_DIR, rel);
       if (!file.startsWith(PUBLIC_DIR + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
         res.writeHead(404); return res.end('Tidak ditemukan');
@@ -895,7 +902,9 @@ function createApp(dbFile, opts = {}) {
       if (!res.headersSent) send(res, status, { error: status === 500 ? 'Kesalahan server' : msg });
     }
   });
-  return { server, db };
+  // Menghapus riwayat pesan WhatsApp yang lebih tua dari `hari` hari (sesuai Kebijakan Privasi).
+  const purgeWaLog = (hari = WA_LOG_HARI) => Number(db.prepare("DELETE FROM wa_log WHERE dibuat < datetime('now', ?)").run(`-${Math.max(1, hari)} days`).changes);
+  return { server, db, purgeWaLog };
 }
 
 module.exports = { createApp };
@@ -911,7 +920,8 @@ if (require.main === module) {
     try { if (jam > 0 && Date.now() - backupTerakhir(backupDir) > (jam - 1) * 3600e3) console.log('Backup otomatis:', backupNow(app.db, backupDir, keep).file); }
     catch (e) { console.error('Backup otomatis gagal:', e.message); }
   };
-  cek(); const timer = setInterval(cek, 3600e3);
+  const bersihkan = () => { try { const n = app.purgeWaLog(Number(process.env.WA_LOG_DAYS) || WA_LOG_HARI); if (n) console.log(`Riwayat WhatsApp: ${n} pesan lama dihapus`); } catch (e) { console.error('Pembersihan riwayat gagal:', e.message); } };
+  cek(); bersihkan(); const timer = setInterval(() => { cek(); bersihkan(); }, 3600e3);
   app.server.listen(port, () => console.log(`Administrasi Yayasan berjalan di http://localhost:${port}`));
   const berhenti = () => { clearInterval(timer); app.server.close(() => { try { app.db.close(); } catch { /* sudah tertutup */ } process.exit(0); }); setTimeout(() => process.exit(0), 5000).unref(); };
   process.on('SIGTERM', berhenti); process.on('SIGINT', berhenti);

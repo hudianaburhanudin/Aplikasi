@@ -293,7 +293,7 @@ pages.pendaftar = crudPage({
   note: `<p class="empty" style="text-align:left">Tautan pendaftaran online untuk orang tua: <b>${esc(location.origin)}/daftar</b> — buka/tutup per lembaga di menu Lembaga.</p>`,
   filters: [{ key: 'status', label: 'Semua status', load: async () => [...STATUS_PPDB, 'terdaftar'].map((v) => ({ value: v, label: v })) }],
   columns: [{ key: 'no_daftar', label: 'No. Daftar' }, { key: 'nama', label: 'Nama' }, { key: 'jk', label: 'L/P' }, { key: 'tgl_lahir', label: 'Tgl lahir' },
-    { key: 'asal_sekolah', label: 'Asal sekolah' }, { key: 'telepon', label: 'Telepon' }, { label: 'Status', render: (r) => `<span class="badge">${esc(r.status)}</span>` }],
+    { key: 'asal_sekolah', label: 'Asal sekolah' }, { key: 'telepon', label: 'Telepon' }, { label: 'Status', render: (r) => `<span class="badge">${esc(r.status)}</span>` }, { label: 'Persetujuan', render: (r) => (r.persetujuan ? '✓ online' : 'via petugas') }],
   rowActions: [
     { name: 'terima', label: 'Terima', show: (r) => ['baru', 'terverifikasi', 'cadangan'].includes(r.status), run: setStatus('diterima') },
     { name: 'tolak', label: 'Tolak', show: (r) => ['baru', 'terverifikasi', 'cadangan'].includes(r.status), run: setStatus('ditolak') },
@@ -351,8 +351,10 @@ pages.kenaikan = guard(async () => {
 pages.profil = guard(async () => {
   const d = await api('profil');
   const F = [['nama_yayasan', 'Nama yayasan'], ['sk_pengesahan', 'Nomor SK pengesahan badan hukum'], ['sk_perubahan', 'Nomor SK/SP perubahan terakhir'],
-    ['tanggal_sk_perubahan', 'Tanggal SK/SP perubahan', 'date'], ['akta_notaris', 'Akta notaris'], ['alamat', 'Alamat'], ['kecamatan', 'Kecamatan'], ['kabupaten', 'Kabupaten'], ['provinsi', 'Provinsi']];
-  $('#main').innerHTML = `<h2>Profil Yayasan</h2><p class="empty" style="text-align:left;padding:0 0 12px">Data legalitas untuk kelengkapan administrasi. Hanya admin yayasan yang dapat melihatnya; tidak dicetak di dokumen.</p>
+    ['tanggal_sk_perubahan', 'Tanggal SK/SP perubahan', 'date'], ['akta_notaris', 'Akta notaris'], ['alamat', 'Alamat'], ['kecamatan', 'Kecamatan'], ['kabupaten', 'Kabupaten'], ['provinsi', 'Provinsi'],
+    ['alamat_kantor', 'PRIVASI · Alamat kantor korespondensi'], ['kontak_email', 'PRIVASI · Email kontak', 'email'], ['kontak_telepon', 'PRIVASI · Telepon/WhatsApp kontak'], ['pejabat_pdp', 'PRIVASI · Nama pejabat/petugas pelindungan data'],
+    ['tanggal_berlaku', 'PRIVASI · Tanggal berlaku kebijakan', 'date'], ['penyedia_server', 'PRIVASI · Nama dan lokasi penyedia server'], ['retensi_alumni', 'PRIVASI · Lama simpan data alumni'], ['retensi_pendaftar', 'PRIVASI · Lama simpan pendaftar yang tidak diterima']];
+  $('#main').innerHTML = `<h2>Profil Yayasan</h2><p class="empty" style="text-align:left;padding:0 0 12px">Data legalitas (SK) hanya dapat dilihat admin yayasan dan tidak dicetak. Isian berawalan <b>PRIVASI</b> tampil di halaman publik <a href="/privasi" target="_blank">/privasi</a> (Kebijakan Privasi); yang kosong ditandai kuning di sana.</p>
     <form id="pf" class="card" style="max-width:720px;display:grid;gap:12px"><div class="fields">${F.map(([k, l, t]) =>
       `<label class="full">${esc(l)}<input name="${k}" type="${t || 'text'}" value="${esc(d[k])}" maxlength="300"></label>`).join('')}</div>
     <div class="actions"><button class="btn primary">Simpan</button></div></form>`;
