@@ -3,8 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { createApp } = require('./server');
 
-async function boot(t) {
-  const { server } = createApp(':memory:');
+async function boot(t, opts) {
+  const { server } = createApp(':memory:', opts);
   await new Promise((r) => server.listen(0, r));
   t.after(() => server.close());
   const base = `http://localhost:${server.address().port}/api/`;
@@ -19,7 +19,7 @@ async function boot(t) {
       return { status: r.status, r, data: type.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) };
     };
   };
-  return { client };
+  return { client, base };
 }
 const tgl = new Date().toISOString().slice(0, 10);
 
@@ -342,4 +342,239 @@ test('profil yayasan hanya untuk admin yayasan', async (t) => {
   // tidak tercetak di PDF
   const pdf = (await yys('pdf/siswa')).data.toString('latin1');
   assert.strictEqual(pdf.includes('AHU'), false);
+});
+
+// ================= WhatsApp =================
+const crypto = require('node:crypto');
+const { kelasKeys, sameKelas, parseTanggal, matchSiswa, waNorm } = require('./wa');
+
+test('WA: pengenal kelas, tanggal, nomor, dan nama', () => {
+  for (const [a, b] of [['7A', 'VII-A'], ['vii a', '7a'], ['X IPA', 'xipa'], ['10 ipa', 'X-IPA'], ['xi tkj', 'XI-TKJ'], ['1a', 'I-A'], ['kelas 7a', 'VIIA']]) assert.ok(sameKelas(a, b), `${a} ~ ${b}`);
+  for (const [a, b] of [['7a', '7b'], ['viii-a', 'vii-a'], ['xi ipa', 'x ipa']]) assert.ok(!sameKelas(a, b), `${a} !~ ${b}`);
+  assert.strictEqual(waNorm('0812-3456-7890'), '6281234567890');
+  assert.strictEqual(waNorm('+62 812 3456 7890'), '6281234567890');
+  assert.strictEqual(waNorm('6281234567890@c.us'), '6281234567890');
+  assert.strictEqual(waNorm('81234567890'), '6281234567890');
+  const T = '2026-10-02';
+  assert.deepStrictEqual(parseTanggal(['kemarin'], T), { tanggal: '2026-10-01', pakai: 1 });
+  assert.deepStrictEqual(parseTanggal(['30/09'], T), { tanggal: '2026-09-30', pakai: 1 });
+  assert.deepStrictEqual(parseTanggal(['1', 'okt'], T), { tanggal: '2026-10-01', pakai: 2 });
+  assert.deepStrictEqual(parseTanggal(['2026-09-28'], T), { tanggal: '2026-09-28', pakai: 1 });
+  assert.ok(parseTanggal(['31/02'], T).err);
+  assert.strictEqual(parseTanggal(['andin'], T), null);
+  const murid = [{ id: 1, nama: 'Andin Pratama' }, { id: 2, nama: 'Andini Putri' }, { id: 3, nama: "Ma'ruf Hakim" }, { id: 4, nama: 'Budi Santoso' }, { id: 5, nama: 'Budi Hartono' }];
+  assert.strictEqual(matchSiswa('andin', murid).siswa.id, 1);              // kata persis lebih diutamakan daripada awalan
+  assert.strictEqual(matchSiswa('ANDINI', murid).siswa.id, 2);
+  assert.strictEqual(matchSiswa('maruf', murid).siswa.id, 3);               // tanda baca diabaikan
+  assert.strictEqual(matchSiswa('santoso', murid).siswa.id, 4);
+  assert.strictEqual(matchSiswa('andn', murid).siswa.id, 1);                // salah ketik 1 huruf, hanya 1 kandidat -> dikenali
+  assert.strictEqual(matchSiswa('andi', murid).ambig.length, 2);            // Andin / Andini -> tidak menebak
+  assert.strictEqual(matchSiswa('budi', murid).ambig.length, 2);
+  assert.strictEqual(matchSiswa('Budi Hart', murid).siswa.id, 5);
+  assert.ok(matchSiswa('zzz', murid).none);
+});
+
+async function siapWa(t, opts) {
+  const { client, base } = await boot(t, opts);
+  const yys = client(); const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id; const [SMP, MI] = [id('SMP'), id('MI')];
+  const kA = (await yys('kelas', 'POST', { nama: 'VII-A' }, SMP)).data.id, kB = (await yys('kelas', 'POST', { nama: 'VII-B' }, SMP)).data.id;
+  const kMI = (await yys('kelas', 'POST', { nama: 'I-A' }, MI)).data.id;
+  const sis = {}; for (const [n, k, l] of [['Andin Pratama', kA, SMP], ['Budi Santoso', kA, SMP], ['Citra Dewi', kA, SMP], ['Andini Putri', kA, SMP], ['Budi Hartono', kB, SMP], ['Dewi Anak MI', kMI, MI]]) sis[n] = (await yys('siswa', 'POST', { nama: n, kelas_id: k }, l)).data.id;
+  const guru = async (username, wa, lembaga) => (await yys('users', 'POST', { username, nama: username, role: 'guru', wa, lembaga_ids: lembaga })).data.id;
+  return { yys, me, SMP, MI, kA, kB, kMI, sis, guru, client, base };
+}
+
+test('WA: absensi "semua hadir kecuali" lewat pesan', async (t) => {
+  const { yys, SMP, kA, sis, guru } = await siapWa(t);
+  const g = await guru('ali', '0812-3456-7001', [SMP]);
+  const wa = (pesan, uid = g) => yys('wa/simulasi', 'POST', { user_id: uid, pesan }).then((r) => r.data.balasan);
+  const status = async () => Object.fromEntries((await yys(`absensi?kelas_id=${kA}&tanggal=${new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10)}`, 'GET', null, SMP)).data.map((r) => [r.nama, r.status + (r.keterangan ? ':' + r.keterangan : '')]));
+
+  let r = await wa('absen 7A andin sakit demam, budi izin');
+  assert.match(r, /Hadir 2 dari 4/); assert.match(r, /Sakit \(1\): Andin Pratama – demam/);
+  const rows = (await yys(`absensi?kelas_id=${kA}&tanggal=${new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10)}`, 'GET', null, SMP)).data;
+  const by = Object.fromEntries(rows.map((x) => [x.nama, x.status]));
+  assert.deepStrictEqual(by, { 'Andin Pratama': 'S', 'Andini Putri': 'H', 'Budi Santoso': 'I', 'Citra Dewi': 'H' });
+
+  // koreksi: kirim ulang menimpa seluruhnya
+  await wa('absen vii-a semua hadir');
+  assert.ok(Object.values(await status()).every((v) => v === 'H'));
+  // beragam gaya penulisan
+  await wa('Absen 7a:\nAndin sakit\nbudi izin acara keluarga\n'); assert.deepStrictEqual(await status(), { 'Andin Pratama': 'S', 'Andini Putri': 'H', 'Budi Santoso': 'I:acara keluarga', 'Citra Dewi': 'H' });
+  await wa('absen 7a sakit: andin, citra'); assert.deepStrictEqual(Object.values(await status()), ['S', 'H', 'H', 'S']);
+  await wa('ABSEN 7A semua hadir kecuali andini alpa, citra sakit demam, batuk'); assert.deepStrictEqual(await status(), { 'Andin Pratama': 'H', 'Andini Putri': 'A', 'Budi Santoso': 'H', 'Citra Dewi': 'S:demam, batuk' });
+  // tanggal mundur
+  r = await wa('absen 7a kemarin andin sakit'); assert.match(r, /Kam, 1 Okt 2026.*tersimpan/s);
+  assert.match(await wa('absen 7a 01/01 andin sakit'), /sampai 14 hari/);
+  assert.match(await wa('absen 7a 31/02 andin sakit'), /tidak valid/);
+
+  // semua-atau-tidak-sama-sekali
+  const sebelum = await status();
+  r = await wa('absen 7a andin sakit, zzz izin, budi alpa'); assert.match(r, /tidak ditemukan/); assert.match(r, /Belum ada yang disimpan/);
+  r = await wa('absen 7a andi sakit'); assert.match(r, /cocok dengan 2 siswa/);                                    // ambigu: tidak menebak
+  r = await wa('absen 7a andin'); assert.match(r, /Status untuk "Andin" tidak jelas/);
+  r = await wa('absen 7a andin sakit, andin izin'); assert.match(r, /dua kali dengan status berbeda/);
+  assert.deepStrictEqual(await status(), sebelum);                                                                 // tidak ada yang berubah
+  assert.match(await wa('absen andin sakit'), /Kelas mana/);                                                       // guru bukan wali kelas
+  assert.match(await wa('absen 9z andin sakit'), /Kelas mana|tidak/);
+
+  // batal mengembalikan keadaan sebelumnya
+  await wa('absen 7a semua hadir'); assert.ok(Object.values(await status()).every((v) => v === 'H'));
+  r = await wa('batal'); assert.match(r, /dikembalikan/); assert.deepStrictEqual(await status(), sebelum);
+  // rekap & bantuan
+  assert.match(await wa('rekap 7a'), /Hadir \d dari 4/);
+  assert.match(await wa('bantuan'), /ABSENSI/);
+  assert.match(await wa('hmm apa ini'), /tidak dikenali/);
+});
+
+test('WA: wali kelas tidak perlu menulis kelas', async (t) => {
+  const { yys, SMP, kA, kB, sis, guru } = await siapWa(t);
+  const gid = (await yys('guru', 'POST', { nama: 'Ust. Wali', telepon: '0812-1111-0000' }, SMP)).data.id;
+  await yys(`kelas/${kA}`, 'PUT', { wali_guru_id: gid });
+  const u = await guru('walikelas', '081211110000', [SMP]); const lain = await guru('lain', '081299990000', [SMP]);
+  const wa = (pesan, uid) => yys('wa/simulasi', 'POST', { user_id: uid, pesan }).then((r) => r.data.balasan);
+  assert.match(await wa('absen andin sakit', u), /Absensi VII-A/);                    // otomatis kelas yang diwalikan
+  assert.match(await wa('rekap', u), /Absensi VII-A/);
+  assert.match(await wa('absen andin sakit', lain), /Kelas mana/);                    // guru lain harus menyebut kelas
+  void kB; void sis;
+});
+
+test('WA: pelanggaran, poin, dan peringatan batas', async (t) => {
+  const { yys, SMP, sis, kA, guru } = await siapWa(t);
+  const g = await guru('ali', '0812-3456-7001', [SMP]);
+  const wa = (pesan) => yys('wa/simulasi', 'POST', { user_id: g, pesan }).then((r) => r.data.balasan);
+  const poin = async (n) => (await yys(`pelanggaran?siswa_id=${sis[n]}`, 'GET', null, SMP)).data.reduce((a, x) => a + x.poin, 0);
+
+  let r = await wa('langgar andin terlambat'); assert.match(r, /Andin Pratama.*Terlambat \(\+5\).*total 5 poin/);
+  assert.strictEqual(await poin('Andin Pratama'), 5);
+  r = await wa('langgar 7a budi berkelahi dengan citra\ncitra hp');                                    // beberapa baris = beberapa entri
+  assert.match(r, /Budi Santoso.*Berkelahi \(\+50\).*dengan citra.*50 poin/s); assert.match(r, /Mencapai 50 poin/); assert.match(r, /Citra Dewi.*Membawa\/menggunakan HP/);
+  r = await wa('pelanggaran: 7a andin telat, budi bolos'); assert.match(r, /Andin Pratama.*Terlambat.*total 10/s); assert.match(r, /Budi Santoso.*Bolos\/keluar.*\(\+20\).*total 70/s);
+  r = await wa('langgar 7a budi merokok'); assert.match(r, /total 120 poin/); assert.match(r, /Mencapai 100 poin/);
+  r = await wa('langgar kemarin andin tugas'); assert.match(r, /Tidak mengerjakan tugas/);
+  r = await wa('langgar terlambat: andin, citra'); assert.match(r, /Andin.*total/s); assert.match(r, /Citra.*total/s);
+
+  // semua-atau-tidak-sama-sekali dan ambigu
+  const before = await poin('Andin Pratama');
+  r = await wa('langgar andin terlambat, zzz bolos'); assert.match(r, /tidak ditemukan/); assert.strictEqual(await poin('Andin Pratama'), before);
+  r = await wa('langgar andi terlambat'); assert.match(r, /cocok dengan 2 siswa/); assert.match(r, /VII-A/);
+  r = await wa('langgar budi terlambat'); assert.match(r, /cocok dengan 2 siswa/);                                  // Budi Santoso (VII-A) dan Budi Hartono (VII-B)
+  r = await wa('langgar andin melompat pagar'); assert.match(r, /tidak dikenali/);
+  r = await wa('langgar 7a andin berkelahi'); assert.match(r, /Berkelahi/);
+
+  // batal & poin
+  const p0 = await poin('Citra Dewi');
+  await wa('langgar citra hp'); assert.strictEqual(await poin('Citra Dewi'), p0 + 15);
+  r = await wa('batal'); assert.match(r, /dibatalkan/); assert.strictEqual(await poin('Citra Dewi'), p0);
+  assert.match(await wa('poin budi santoso'), /Total 120 poin/);
+  assert.match(await wa('poin andi'), /cocok dengan/);
+  assert.match(await wa('jenis'), /terlambat – Terlambat \(5\)/);
+  void kA;
+});
+
+test('WA: keamanan - nomor tak terdaftar, lembaga lain, dan peran guru', async (t) => {
+  const { yys, SMP, MI, kMI, sis, guru, client } = await siapWa(t);
+  const g = await guru('ali', '0812-3456-7001', [SMP]);
+  const wa = (pesan) => yys('wa/simulasi', 'POST', { user_id: g, pesan }).then((r) => r.data.balasan);
+  // guru SMP tidak bisa menyentuh siswa/kelas MI lewat WhatsApp
+  assert.match(await wa('absen i-a dewi sakit'), /Kelas mana|tidak/);
+  assert.match(await wa('langgar anak mi terlambat'), /tidak ditemukan/);
+  assert.match(await wa('poin dewi anak mi'), /tidak ditemukan/);
+  const mi = (await yys('absensi?kelas_id=' + kMI + '&tanggal=2026-10-02', 'GET', null, MI)).data; assert.ok(mi.every((x) => x.status === null));
+  assert.strictEqual((await yys('pelanggaran', 'GET', null, MI)).data.length, 0);
+  // nomor WA unik
+  assert.strictEqual((await yys('users', 'POST', { username: 'dobel', nama: 'D', role: 'guru', wa: '+62 812-3456-7001', lembaga_ids: [SMP] })).status, 409);
+  assert.strictEqual((await yys('users', 'POST', { username: 'salah', nama: 'D', role: 'guru', wa: '123', lembaga_ids: [SMP] })).status, 400);
+
+  // login web guru: tanpa password (acak), dengan password: akses terbatas
+  assert.strictEqual((await yys('users', 'POST', { username: 'ali2', nama: 'Ali', role: 'staf', lembaga_ids: [SMP] })).status, 400);   // staf tetap wajib password
+  const guruWeb = (await yys('users', 'POST', { username: 'guruweb', password: 'rahasia1', nama: 'Guru Web', role: 'guru', lembaga_ids: [SMP] })).data.id; void guruWeb;
+  const gw = client(); await gw('login', 'POST', { username: 'guruweb', password: 'rahasia1' }); await gw('password', 'POST', { lama: 'rahasia1', baru: 'rahasia2x' });
+  assert.strictEqual((await gw('siswa')).status, 200);
+  const sw = (await gw('siswa')).data; assert.ok(sw.length > 0 && sw.every((x) => !('nik' in x) && !('alamat' in x)));       // data pribadi disembunyikan
+  assert.strictEqual((await gw('siswa', 'POST', { nama: 'x' })).status, 403);
+  for (const p of ['pembayaran', 'tagihan', 'nilai', 'users', 'dashboard', 'lembaga', 'pendaftar', 'wa/status', 'wa/log', 'pdf/siswa', 'export/siswa', 'wali-akun?siswa_id=1', 'profil']) assert.strictEqual((await gw(p)).status, 403, p);
+  assert.strictEqual((await gw('absensi', 'POST', { tanggal: '2026-10-02', items: [{ siswa_id: sis['Andin Pratama'], status: 'S' }] })).status, 200);
+  const jn = (await gw('jenis_pelanggaran')).data[0];
+  assert.strictEqual((await gw('pelanggaran', 'POST', { siswa_id: sis['Andin Pratama'], jenis_id: jn.id, tanggal: '2026-10-02' })).status, 200);
+  assert.strictEqual((await gw('jenis_pelanggaran', 'POST', { kode: 'baru', nama: 'Baru' })).status, 403);
+
+  // admin lembaga lain tidak melihat log WA / penerima SMP
+  await yys('users', 'POST', { username: 'adminmi', password: 'rahasia1', nama: 'A', role: 'admin', lembaga_ids: [MI] });
+  const am = client(); await am('login', 'POST', { username: 'adminmi', password: 'rahasia1' }); await am('password', 'POST', { lama: 'rahasia1', baru: 'rahasia2x' });
+  await wa('langgar andin terlambat');
+  assert.strictEqual((await am('wa/status')).data.penerima.length, 0);
+  assert.strictEqual((await am('wa/log')).data.length, 0);
+  assert.strictEqual((await am('wa/simulasi', 'POST', { user_id: g, pesan: 'bantuan' })).status, 404);
+  assert.ok((await yys('wa/log')).data.length > 0);
+  assert.strictEqual((await am('pelanggaran')).data.length, 0);
+});
+
+test('WA: webhook Meta - tanda tangan, nomor, duplikat, kedaluwarsa, dan balasan', async (t) => {
+  const kirim = [];
+  const fakeFetch = async (url, init) => {
+    let body; try { body = JSON.parse(init.body); } catch { body = Object.fromEntries(new URLSearchParams(init.body)); }
+    kirim.push({ url, body, auth: init.headers.Authorization }); return { ok: true, status: 200 };
+  };
+  const KEYS = ['WA_PROVIDER', 'WA_APP_SECRET', 'WA_VERIFY_TOKEN', 'WA_ACCESS_TOKEN', 'WA_PHONE_NUMBER_ID', 'WA_WEBHOOK_TOKEN', 'FONNTE_TOKEN', 'WAHA_URL'];
+  Object.assign(process.env, { WA_PROVIDER: 'meta', WA_APP_SECRET: 'rahasia-app', WA_VERIFY_TOKEN: 'verif', WA_ACCESS_TOKEN: 'tok', WA_PHONE_NUMBER_ID: '123' });
+  t.after(() => { for (const k of KEYS) delete process.env[k]; });
+  const { yys, SMP, kA, guru, base } = await siapWa(t, { fetch: fakeFetch });
+  await guru('ali', '0812-3456-7001', [SMP]);
+  const url = base + 'wa/webhook';
+  const payload = (msgs) => JSON.stringify({ object: 'whatsapp_business_account', entry: [{ changes: [{ value: { messages: msgs } }] }] });
+  const msg = (id, from, body, extra = {}) => ({ from, id, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body }, ...extra });
+  const sig = (raw, secret = 'rahasia-app') => 'sha256=' + crypto.createHmac('sha256', secret).update(raw).digest('hex');
+  const post = (raw, headers = {}) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: raw });
+  const tgl = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  const absen = async () => (await yys(`absensi?kelas_id=${kA}&tanggal=${tgl}`, 'GET', null, SMP)).data.map((x) => x.status).join('');
+
+  // verifikasi pendaftaran webhook oleh Meta
+  assert.strictEqual(await (await fetch(`${url}?hub.mode=subscribe&hub.verify_token=verif&hub.challenge=abc123`)).text(), 'abc123');
+  assert.strictEqual((await fetch(`${url}?hub.mode=subscribe&hub.verify_token=salah&hub.challenge=x`)).status, 403);
+
+  // tanda tangan wajib dan harus benar
+  const raw1 = payload([msg('wamid.1', '6281234567001', 'absen 7a andin sakit')]);
+  assert.strictEqual((await post(raw1)).status, 401);
+  assert.strictEqual((await post(raw1, { 'x-hub-signature-256': sig(raw1, 'secret-salah') })).status, 401);
+  assert.strictEqual((await post(raw1, { 'x-hub-signature-256': sig(raw1 + ' ') })).status, 401);                  // isi diubah
+  assert.strictEqual(kirim.length, 0); assert.strictEqual(await absen(), '');                                       // tidak ada yang diproses
+
+  // pesan sah dari guru terdaftar: tersimpan + balasan dikirim lewat Graph API
+  let r = await post(raw1, { 'x-hub-signature-256': sig(raw1) }); assert.strictEqual(r.status, 200);
+  const rows = (await yys(`absensi?kelas_id=${kA}&tanggal=${tgl}`, 'GET', null, SMP)).data; assert.deepStrictEqual(Object.fromEntries(rows.map((x) => [x.nama, x.status])), { 'Andin Pratama': 'S', 'Andini Putri': 'H', 'Budi Santoso': 'H', 'Citra Dewi': 'H' });
+  assert.strictEqual(kirim.length, 1);
+  assert.strictEqual(kirim[0].url, 'https://graph.facebook.com/v21.0/123/messages'); assert.strictEqual(kirim[0].auth, 'Bearer tok');
+  assert.strictEqual(kirim[0].body.to, '6281234567001'); assert.match(kirim[0].body.text.body, /Absensi VII-A/);
+
+  // Meta mengirim ulang pesan yang sama: tidak diproses dua kali
+  r = await post(raw1, { 'x-hub-signature-256': sig(raw1) }); assert.deepStrictEqual((await r.json()).hasil, [{ id: 'wamid.1', status: 'duplikat' }]); assert.strictEqual(kirim.length, 1);
+
+  // antrean lama (>1 jam) diabaikan
+  const lama = payload([msg('wamid.2', '6281234567001', 'absen 7a semua hadir', { timestamp: String(Math.floor(Date.now() / 1000) - 7200) })]);
+  r = await post(lama, { 'x-hub-signature-256': sig(lama) }); assert.strictEqual((await r.json()).hasil[0].status, 'kedaluwarsa'); assert.strictEqual(kirim.length, 1);
+  assert.strictEqual((await yys(`absensi?kelas_id=${kA}&tanggal=${tgl}`, 'GET', null, SMP)).data.find((x) => x.nama === 'Andin Pratama').status, 'S');
+
+  // nomor tak terdaftar: dibalas penolakan, tidak menyimpan apa pun, dan berhenti dibalas setelah 3 kali
+  for (let i = 0; i < 5; i++) { const raw = payload([msg('wamid.u' + i, '6285550001111', 'absen 7a andin sakit')]); await post(raw, { 'x-hub-signature-256': sig(raw) }); }
+  const penolakan = kirim.filter((k) => k.body.to === '6285550001111'); assert.strictEqual(penolakan.length, 3); assert.match(penolakan[0].body.text.body, /belum terdaftar/);
+
+  // pesan bukan teks (gambar/suara)
+  const img = payload([{ from: '6281234567001', id: 'wamid.img', timestamp: String(Math.floor(Date.now() / 1000)), type: 'image', image: { id: 'x' } }]);
+  await post(img, { 'x-hub-signature-256': sig(img) }); assert.match(kirim[kirim.length - 1].body.text.body, /hanya mengerti pesan teks/);
+
+  // tanpa WA_APP_SECRET webhook menolak (fail-closed); WA_PROVIDER=none -> mati
+  delete process.env.WA_APP_SECRET; assert.strictEqual((await post(raw1, { 'x-hub-signature-256': sig(raw1) })).status, 503);
+  process.env.WA_PROVIDER = 'none'; assert.strictEqual((await post(raw1)).status, 404);
+
+  // ---- Fonnte: token di URL, form-encoded ----
+  Object.assign(process.env, { WA_PROVIDER: 'fonnte', WA_WEBHOOK_TOKEN: 'tokenku', FONNTE_TOKEN: 'ft' });
+  const form = (m) => new URLSearchParams({ sender: '6281234567001', message: m, device: 'x' }).toString();
+  const f = (q, m) => fetch(`${url}${q}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form(m) });
+  assert.strictEqual((await f('', 'absen 7a budi izin')).status, 401); assert.strictEqual((await f('?token=salah', 'absen 7a budi izin')).status, 401);
+  const n0 = kirim.length; assert.strictEqual((await f('?token=tokenku', 'absen 7a budi izin')).status, 200);
+  assert.strictEqual(kirim.length, n0 + 1); assert.strictEqual(kirim[n0].url, 'https://api.fonnte.com/send'); assert.strictEqual(kirim[n0].auth, 'ft'); assert.strictEqual(kirim[n0].body.target, '6281234567001');
+  assert.strictEqual((await yys(`absensi?kelas_id=${kA}&tanggal=${tgl}`, 'GET', null, SMP)).data.find((x) => x.nama === 'Budi Santoso').status, 'I');
+  void kirim;
 });

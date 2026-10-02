@@ -2,7 +2,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { openDb, hashPassword, verifyPassword } = require('./db');
+const { openDb, hashPassword, verifyPassword, seedJenis } = require('./db');
+const { createWa, waNorm } = require('./wa');
 const { buildXlsx } = require('./xlsx');
 const { tablePdf, raporPdf, kuitansiPdf } = require('./pdf');
 
@@ -74,6 +75,18 @@ const RES = {
     sel: `SELECT a.*, l.kode lembaga_kode FROM pengumuman a ${LJ}a.lembaga_id`,
     search: ['a.judul', 'a.isi'], filters: {}, order: 'a.id DESC', scopeCol: 'a.lembaga_id', scopeKey: 'lembaga_id',
   },
+  pelanggaran: {
+    a: 'v', table: 'pelanggaran', cols: ['siswa_id', 'jenis_id', 'tanggal', 'keterangan'], req: ['siswa_id', 'jenis_id', 'tanggal'],
+    sel: `SELECT v.*, s.lembaga_id, l.kode lembaga_kode, s.nama siswa_nama, s.nis, k.nama kelas_nama FROM pelanggaran v
+          JOIN siswa s ON s.id = v.siswa_id ${LJ}s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id`,
+    search: ['s.nama', 'v.jenis_nama', 'v.keterangan'], filters: { siswa_id: 'v.siswa_id', kelas_id: 's.kelas_id', jenis_id: 'v.jenis_id' },
+    order: 'v.tanggal DESC, v.id DESC', scopeCol: 's.lembaga_id', scopeKey: 'lembaga_id',
+  },
+  jenis_pelanggaran: {
+    a: 'j', table: 'jenis_pelanggaran', cols: ['kode', 'nama', 'poin', 'aktif'], req: ['kode', 'nama'], own: true,
+    sel: `SELECT j.*, l.kode lembaga_kode FROM jenis_pelanggaran j ${LJ}j.lembaga_id`,
+    search: ['j.nama', 'j.kode'], filters: {}, order: 'l.id, j.poin, j.nama', scopeCol: 'j.lembaga_id', scopeKey: 'lembaga_id',
+  },
   pendaftar: {
     a: 'd', table: 'pendaftar', own: true,
     cols: ['nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'alamat', 'nama_ayah', 'nama_ibu', 'telepon', 'asal_sekolah', 'status', 'catatan'], req: ['nama'],
@@ -106,15 +119,19 @@ const EXPORTS = {
   nilai: ['Nilai Siswa', [['Lembaga', 'lembaga_kode'], ['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Mapel', 'mapel'], ['Jenis', 'jenis'], ['Nilai', 'nilai'], ['Semester', 'semester']]],
   pembayaran: ['Pembayaran', [['Lembaga', 'lembaga_kode'], ['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Jenis', 'jenis'], ['Periode', 'bulan'], ['Jumlah (Rp)', 'jumlah'], ['Keterangan', 'keterangan']]],
   tagihan: ['Tagihan', [['Lembaga', 'lembaga_kode'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Jenis', 'jenis'], ['Periode', 'periode'], ['Jatuh Tempo', 'jatuh_tempo'], ['Jumlah (Rp)', 'jumlah'], ['Terbayar (Rp)', 'terbayar'], ['Sisa (Rp)', 'sisa'], ['Status', 'status']]],
+  pelanggaran: ['Pelanggaran Siswa', [['Lembaga', 'lembaga_kode'], ['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Pelanggaran', 'jenis_nama'], ['Poin', 'poin'], ['Keterangan', 'keterangan'], ['Dicatat oleh', 'dicatat_oleh'], ['Sumber', 'sumber']]],
   pendaftar: ['Data Pendaftar', [['Lembaga', 'lembaga_kode'], ['No. Daftar', 'no_daftar'], ['Nama', 'nama'], ['L/P', 'jk'], ['Tgl Lahir', 'tgl_lahir'], ['Asal Sekolah', 'asal_sekolah'], ['Telepon', 'telepon'], ['Status', 'status']]],
   'rekap-absensi': ['Rekap Absensi', [['NIS', 'nis'], ['Nama', 'nama'], ['Hadir', 'h'], ['Sakit', 's'], ['Izin', 'i'], ['Alpa', 'a']]],
 };
-const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka']);
+const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin']);
 const KENAIKAN = ['naik', 'lulus', 'pindah', 'keluar'];
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
 const ABSEN = new Set(['H', 'S', 'I', 'A']);
-const ROLES = ['yayasan', 'admin', 'staf']; // 'wali' dikelola lewat /api/wali-akun
+const ROLES = ['yayasan', 'admin', 'staf', 'guru']; // 'wali' dikelola lewat /api/wali-akun
+// Guru hanya boleh: absensi dan pelanggaran (tulis), serta melihat kelas/siswa/jenis pelanggaran.
+const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran']);
+const GURU_BACA_SAJA = new Set(['kelas', 'siswa', 'jenis_pelanggaran']);
 const MIN_PW = 8;
 const PROFIL_KEYS = ['nama_yayasan', 'sk_pengesahan', 'sk_perubahan', 'tanggal_sk_perubahan', 'akta_notaris', 'alamat', 'kecamatan', 'kabupaten', 'provinsi'];
 const PW_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -126,8 +143,9 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-function createApp(dbFile) {
+function createApp(dbFile, opts = {}) {
   const db = openDb(dbFile);
+  const wa = createWa(db, { todayWib, fetchImpl: opts.fetch });
   const sessions = new Map(); // token -> {userId, exp}
   const attempts = new Map(); // ip -> {n, until}
   const buckets = new Map(); // "nama:ip" -> {n, reset}
@@ -162,7 +180,7 @@ function createApp(dbFile) {
     : db.prepare('SELECT lembaga_id id FROM user_lembaga WHERE user_id = ?').all(u.id).map((r) => r.id));
   const publicUser = (u) => {
     const ids = userLembagaIds(u);
-    return { id: u.id, username: u.username, nama: u.nama, role: u.role, must_change: !!u.must_change,
+    return { id: u.id, username: u.username, nama: u.nama, role: u.role, wa: u.wa || null, must_change: !!u.must_change,
       lembagas: ids.length ? db.prepare(`SELECT id, kode, nama FROM lembaga WHERE id IN (${ph(ids)}) ORDER BY id`).all(...ids) : [] };
   };
   // Lembaga yang sedang aktif dipilih lewat header X-Lembaga ("all" = semua yang diizinkan)
@@ -326,6 +344,49 @@ function createApp(dbFile) {
     throw new HttpError(404, 'Endpoint tidak ditemukan');
   }
 
+  // ---- pelanggaran siswa (input web; input WhatsApp ada di wa.js) ----
+  function cekKodeJenis(d) {
+    if (!/^[a-z0-9_]{2,20}$/.test(String(d.kode || ''))) throw new HttpError(400, 'Kode jenis 2-20 karakter: huruf kecil, angka, garis bawah');
+  }
+  // Mengisi nama jenis & poin dari master; `keluar` (opsional) menerima hasil pada objek lain saat ubah data.
+  function fillPelanggaran(d, ctx, keluar = d) {
+    const sis = db.prepare('SELECT lembaga_id FROM siswa WHERE id = ?').get(d.siswa_id);
+    const j = db.prepare('SELECT * FROM jenis_pelanggaran WHERE id = ? AND lembaga_id = ?').get(d.jenis_id, sis && sis.lembaga_id);
+    if (!j) throw new HttpError(400, 'Jenis pelanggaran tidak valid untuk lembaga siswa ini');
+    Object.assign(keluar, { jenis_nama: j.nama, poin: j.poin });
+    if (keluar === d) Object.assign(d, { dicatat_oleh: ctx.user.nama, sumber: 'web' });
+  }
+  function ringkasanPoin(ctx, q) {
+    const ids = ctx.scope.ids;
+    return db.prepare(`SELECT s.id siswa_id, s.nama, s.nis, k.nama kelas_nama, l.kode lembaga_kode, COUNT(v.id) jumlah, SUM(v.poin) total FROM pelanggaran v
+      JOIN siswa s ON s.id = v.siswa_id JOIN lembaga l ON l.id = s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id
+      WHERE s.lembaga_id IN (${ph(ids)}) ${q.kelas_id ? 'AND s.kelas_id = ' + Number(q.kelas_id) : ''} GROUP BY s.id ORDER BY total DESC, s.nama LIMIT 100`).all(...ids);
+  }
+
+  // ---- WhatsApp: pengaturan, simulator, dan log ----
+  function waLog(ctx) {
+    const ids = ctx.scope.ids;
+    if (ctx.user.role === 'yayasan') {
+      return db.prepare(`SELECT w.id, w.dibuat, w.nomor, w.pesan, w.balasan, w.status, w.sumber, u.nama pengirim FROM wa_log w LEFT JOIN users u ON u.id = w.user_id
+        ORDER BY w.id DESC LIMIT 60`).all();
+    }
+    if (!ids.length) return [];
+    return db.prepare(`SELECT w.id, w.dibuat, w.nomor, w.pesan, w.balasan, w.status, w.sumber, u.nama pengirim FROM wa_log w JOIN users u ON u.id = w.user_id
+      WHERE w.user_id IN (SELECT user_id FROM user_lembaga WHERE lembaga_id IN (${ph(ids)})) ORDER BY w.id DESC LIMIT 60`).all(...ids);
+  }
+  function waStatus(ctx) {
+    const penerima = db.prepare(`SELECT u.id, u.nama, u.role, u.wa FROM users u WHERE u.wa IS NOT NULL AND u.role != 'wali' ORDER BY u.nama`).all()
+      .filter((u) => ctx.user.role === 'yayasan' || (u.role !== 'yayasan' && db.prepare(`SELECT 1 FROM user_lembaga WHERE user_id = ? AND lembaga_id IN (${ph(ctx.scope.ids.concat([0]))})`).get(u.id, ...ctx.scope.ids, 0)));
+    return { provider: wa.provider(), bantuan: wa.BANTUAN, penerima };
+  }
+  function waSimulasi(body, ctx) {
+    const u = db.prepare("SELECT * FROM users WHERE id = ? AND role != 'wali'").get(Number(body.user_id));
+    const boleh = u && (ctx.user.role === 'yayasan' || waStatus(ctx).penerima.some((x) => x.id === u.id));
+    if (!boleh) throw new HttpError(404, 'Pengguna tidak ditemukan');
+    const r = wa.terima({ id: null, dari: u.wa, teks: String(body.pesan || '').slice(0, 2000), sumber: 'simulasi', userId: u.id });
+    return { balasan: r.balasan, status: r.status };
+  }
+
   // ---- tagihan massal ----
   function generateTagihan(body, ctx) {
     const kid = Number(body.kelas_id);
@@ -425,6 +486,8 @@ function createApp(dbFile) {
         tagihan: db.prepare(`SELECT t.id, t.jenis, t.periode, t.jumlah, t.jatuh_tempo, t.keterangan, ${TERBAYAR} terbayar, ${TSISA} sisa, ${TSTATUS} status
           FROM tagihan t WHERE t.siswa_id = ? ORDER BY t.periode DESC, t.id DESC`).all(id),
         pembayaran: db.prepare('SELECT tanggal, jenis, bulan, jumlah, keterangan FROM pembayaran WHERE siswa_id = ? ORDER BY tanggal DESC, id DESC LIMIT 100').all(id),
+        pelanggaran: { total_poin: db.prepare('SELECT COALESCE(SUM(poin), 0) n FROM pelanggaran WHERE siswa_id = ?').get(id).n,
+          daftar: db.prepare('SELECT tanggal, jenis_nama, poin, keterangan FROM pelanggaran WHERE siswa_id = ? ORDER BY tanggal DESC, id DESC LIMIT 50').all(id) },
       };
     }
     if (what === 'pengumuman') {
@@ -468,10 +531,13 @@ function createApp(dbFile) {
       checkRefs(cfg, d, lid, ctx);
       if (cfg.table === 'pendaftar') fillPendaftar(d, lid, 'admin');
       if (cfg.table === 'pengumuman') Object.assign(d, { dibuat_oleh: ctx.user.nama, tanggal: todayWib() });
+      if (cfg.table === 'pelanggaran') fillPelanggaran(d, ctx);
+      if (cfg.table === 'jenis_pelanggaran') cekKodeJenis(d);
       const keys = Object.keys(d);
       const r = db.prepare(`INSERT INTO ${cfg.table} (${keys.join(',')}) VALUES (${ph(keys)})`).run(...keys.map((k) => d[k]));
       const newId = Number(r.lastInsertRowid);
       if (cfg.table === 'tahun_ajaran' && d.aktif === 1) db.prepare('UPDATE tahun_ajaran SET aktif = 0 WHERE id != ?').run(newId);
+      if (cfg.table === 'lembaga') seedJenis(db, newId);
       return { id: newId };
     }
     if (method === 'PUT' && id) {
@@ -480,8 +546,11 @@ function createApp(dbFile) {
       const keys = Object.keys(d);
       if (!keys.length) throw new HttpError(400, 'Tidak ada data untuk diubah');
       checkRefs(cfg, d, cfg.scopeKey ? row[cfg.scopeKey] : null, ctx);
+      if (cfg.table === 'pelanggaran' && 'jenis_id' in d) fillPelanggaran({ ...d, siswa_id: row.siswa_id }, ctx, d);
+      if (cfg.table === 'jenis_pelanggaran' && 'kode' in d) cekKodeJenis(d);
       if (cfg.table === 'pendaftar' && row.siswa_id && 'status' in d) throw new HttpError(400, 'Pendaftar sudah menjadi siswa, status tidak dapat diubah');
-      db.prepare(`UPDATE ${cfg.table} SET ${keys.map((k) => k + ' = ?').join(',')} WHERE id = ?`).run(...keys.map((k) => d[k]), id);
+      const ks = Object.keys(d);                 // setelah hook, agar kolom turunan (poin, jenis_nama) ikut tersimpan
+      db.prepare(`UPDATE ${cfg.table} SET ${ks.map((k) => k + ' = ?').join(',')} WHERE id = ?`).run(...ks.map((k) => d[k]), id);
       if (cfg.table === 'tahun_ajaran' && d.aktif === 1) db.prepare('UPDATE tahun_ajaran SET aktif = 0 WHERE id != ?').run(id);
       return { ok: true };
     }
@@ -497,7 +566,7 @@ function createApp(dbFile) {
     if (method === 'GET') {
       if (!q.kelas_id || !q.tanggal) throw new HttpError(400, 'kelas_id dan tanggal wajib diisi');
       lembagaOf('kelas', q.kelas_id, ctx);
-      return db.prepare(`SELECT s.id siswa_id, s.nis, s.nama, a.status FROM siswa s
+      return db.prepare(`SELECT s.id siswa_id, s.nis, s.nama, a.status, a.keterangan FROM siswa s
         LEFT JOIN absensi a ON a.siswa_id = s.id AND a.tanggal = ?
         WHERE s.kelas_id = ? AND s.status = 'aktif' ORDER BY s.nama`).all(q.tanggal, q.kelas_id);
     }
@@ -571,8 +640,9 @@ function createApp(dbFile) {
     if (me.role !== 'yayasan' && me.role !== 'admin') throw new HttpError(403, 'Anda tidak berhak mengelola pengguna');
     const myIds = me.lembagas.map((l) => l.id);
     const idsOf = (uid) => db.prepare('SELECT lembaga_id FROM user_lembaga WHERE user_id = ?').all(uid).map((r) => r.lembaga_id);
-    const canManage = (u) => me.role === 'yayasan' || (u.role === 'staf' && idsOf(u.id).length > 0 && idsOf(u.id).every((i) => myIds.includes(i)));
-    const roleOk = (r) => (me.role === 'yayasan' ? ROLES.includes(r) : r === 'staf');
+    const canManage = (u) => me.role === 'yayasan' || ((u.role === 'staf' || u.role === 'guru') && idsOf(u.id).length > 0 && idsOf(u.id).every((i) => myIds.includes(i)));
+    const roleOk = (r) => (me.role === 'yayasan' ? ROLES.includes(r) : r === 'staf' || r === 'guru');
+    const nomorWa = (v) => { if (v === undefined) return undefined; const n = waNorm(v); if (String(v).trim() && (n.length < 10 || n.length > 15)) throw new HttpError(400, 'Nomor WhatsApp tidak valid'); return n || null; };
     const parseIds = (role, v) => {
       if (role === 'yayasan') return [];
       const arr = [...new Set((Array.isArray(v) ? v : []).map(Number))];
@@ -589,20 +659,23 @@ function createApp(dbFile) {
     if (id && (!target || target.role === 'wali' || !canManage(target))) throw new HttpError(404, 'Pengguna tidak ditemukan');
 
     if (method === 'GET') {
-      return db.prepare("SELECT id, username, nama, role FROM users WHERE role != 'wali' ORDER BY username").all()
+      return db.prepare("SELECT id, username, nama, role, wa FROM users WHERE role != 'wali' ORDER BY username").all()
         .map((u) => ({ ...u, lembaga_ids: idsOf(u.id) }))
         .filter((u) => me.role === 'yayasan' || (u.role !== 'yayasan' && u.lembaga_ids.some((i) => myIds.includes(i))));
     }
     if (method === 'POST') {
-      const { username, password, nama, role = 'staf' } = body;
+      const { username, nama, role = 'staf' } = body;
+      const nomor = nomorWa(body.wa) ?? null;
+      // guru yang hanya memakai WhatsApp tidak perlu password: dibuatkan acak yang tidak diketahui siapa pun
+      const password = body.password || (role === 'guru' && nomor ? genPassword() + genPassword() : '');
       if (!username || !password || !nama) throw new HttpError(400, 'Username, password, dan nama wajib diisi');
       if (String(password).length < MIN_PW) throw new HttpError(400, `Password minimal ${MIN_PW} karakter`);
       if (!roleOk(role)) throw new HttpError(400, 'Role tidak valid');
       const arr = parseIds(role, body.lembaga_ids);
       db.exec('BEGIN');
       try {
-        const r = db.prepare('INSERT INTO users (username, password, nama, role, must_change) VALUES (?,?,?,?,1)')
-          .run(String(username).trim(), hashPassword(String(password)), String(nama).trim(), role);
+        const r = db.prepare('INSERT INTO users (username, password, nama, role, must_change, wa) VALUES (?,?,?,?,1,?)')
+          .run(String(username).trim(), hashPassword(String(password)), String(nama).trim(), role, nomor);
         setLembaga(Number(r.lastInsertRowid), arr);
         db.exec('COMMIT');
         return { id: Number(r.lastInsertRowid) };
@@ -617,6 +690,7 @@ function createApp(dbFile) {
       db.exec('BEGIN');
       try {
         db.prepare('UPDATE users SET nama = ?, role = ? WHERE id = ?').run(String(body.nama || target.nama).trim(), role, target.id);
+        if ('wa' in body) db.prepare('UPDATE users SET wa = ? WHERE id = ?').run(nomorWa(body.wa) ?? null, target.id);
         if (body.password) {
           db.prepare('UPDATE users SET password = ?, must_change = 1 WHERE id = ?').run(hashPassword(String(body.password)), target.id);
           for (const [t, s] of sessions) if (s.userId === target.id) sessions.delete(t);
@@ -635,6 +709,13 @@ function createApp(dbFile) {
     }
     throw new HttpError(405, 'Metode tidak didukung');
   }
+
+  const readRaw = (req) => new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on('data', (c) => { size += c.length; if (size > 1e6) { reject(new HttpError(413, 'Data terlalu besar')); req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
 
   const readBody = (req) => new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
@@ -691,6 +772,12 @@ function createApp(dbFile) {
     }
 
     if (name === 'public') return publicApi(req, res, parts);
+    if (name === 'wa' && parts[1] === 'webhook') {                       // dipanggil penyedia WhatsApp, diamankan token/tanda tangan
+      const raw = req.method === 'POST' ? await readRaw(req) : Buffer.alloc(0);
+      const r = await wa.webhook({ method: req.method, query: Object.fromEntries(url.searchParams), headers: req.headers, raw });
+      if (r.text !== undefined) { res.writeHead(r.status, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end(r.text); }
+      return send(res, r.status, r.json);
+    }
 
     const sess = getSession(req);
     if (!sess) throw new HttpError(401, 'Silakan login terlebih dahulu');
@@ -699,6 +786,7 @@ function createApp(dbFile) {
 
     // Wali hanya boleh mengakses /api/wali; akun yang wajib ganti password hanya boleh ganti password.
     if (ctx.user.role === 'wali' && !['me', 'logout', 'password', 'wali'].includes(name)) throw new HttpError(403, 'Akses ditolak');
+    if (ctx.user.role === 'guru' && (!GURU_API.has(name) || (GURU_BACA_SAJA.has(name) && method !== 'GET'))) throw new HttpError(403, 'Akses ditolak');
     if (ctx.user.must_change && !['me', 'logout', 'password'].includes(name)) throw new HttpError(403, 'Anda harus mengganti password terlebih dahulu');
 
     if (name === 'logout' && method === 'POST') {
@@ -742,6 +830,14 @@ function createApp(dbFile) {
         'application/pdf', `${key}-${today}.pdf`);
     }
     if (name === 'wali') return send(res, 200, waliApi(parts, ctx));
+    if (name === 'wa') {
+      if (ctx.user.role !== 'yayasan' && ctx.user.role !== 'admin') throw new HttpError(403, 'Hanya admin yang dapat mengelola WhatsApp');
+      if (parts[1] === 'status') return send(res, 200, waStatus(ctx));
+      if (parts[1] === 'log') return send(res, 200, waLog(ctx));
+      if (parts[1] === 'simulasi' && method === 'POST') return send(res, 200, waSimulasi(await readBody(req), ctx));
+      throw new HttpError(404, 'Endpoint tidak ditemukan');
+    }
+    if (name === 'pelanggaran' && parts[1] === 'ringkasan') return send(res, 200, ringkasanPoin(ctx, q));
     if (name === 'wali-akun') return send(res, 200, waliAkun(method, parts, q, method === 'POST' ? await readBody(req) : {}, ctx));
     if (name === 'tagihan' && parts[1] === 'generate' && method === 'POST') return send(res, 200, generateTagihan(await readBody(req), ctx));
     if (name === 'pendaftar' && parts[2] === 'terima' && method === 'POST') return send(res, 200, terimaPendaftar(id, await readBody(req), ctx));
@@ -764,7 +860,9 @@ function createApp(dbFile) {
     if (name === 'users') return send(res, 200, users(method, id, method === 'POST' || method === 'PUT' ? await readBody(req) : {}, ctx));
     if (RES[name]) {
       const body = method === 'POST' || method === 'PUT' ? await readBody(req) : {};
-      return send(res, 200, crud(RES[name], method, id, q, body, ctx));
+      const hasil = crud(RES[name], method, id, q, body, ctx);
+      if (ctx.user.role === 'guru' && name === 'siswa') for (const r of Array.isArray(hasil) ? hasil : [hasil]) { delete r.nik; delete r.alamat; }   // data pribadi tidak perlu untuk guru
+      return send(res, 200, hasil);
     }
     throw new HttpError(404, 'Endpoint tidak ditemukan');
   }

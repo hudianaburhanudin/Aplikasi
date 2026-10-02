@@ -49,6 +49,12 @@ dialog form{padding:20px;display:grid;gap:12px}dialog h3{margin:0}
 .badge{display:inline-block;padding:1px 8px;border-radius:10px;background:#e8ecf6;font-size:12px}
 .rapor{background:#fff;padding:24px;border:1px solid var(--bd);border-radius:10px;max-width:760px}
 .rapor h3{text-align:center;margin:0 0 4px}.rapor dl{display:grid;grid-template-columns:130px 1fr;gap:2px 8px;margin:12px 0}.rapor dt{color:var(--mut)}.rapor dd{margin:0}
+
+.chat{background:#efeae2;border-radius:10px;padding:12px;height:300px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.bub{max-width:82%;padding:7px 10px;border-radius:9px;font-size:13.5px;line-height:1.4;box-shadow:0 1px 1px #0002;white-space:pre-wrap;word-break:break-word}
+.bub.in{background:#fff;align-self:flex-start;border-top-left-radius:2px}.bub.out{background:#d9fdd3;align-self:flex-end;border-top-right-radius:2px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.chips .chip{color:var(--ink);border-color:var(--bd);background:#fff}
+.wa-help{white-space:pre-wrap;font-size:13px;margin-top:6px;max-height:330px;overflow:auto}
 @media(max-width:760px){.app{grid-template-columns:1fr}.sidebar{position:static;height:auto}#nav{grid-auto-flow:column;overflow:auto}.fields{grid-template-columns:1fr}}
 @media print{.sidebar,.bar,.noprint{display:none!important}.app{display:block}main{padding:0}.rapor{border:0;max-width:none}}
 

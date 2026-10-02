@@ -65,6 +65,7 @@ const views = {
       <div class="tiles"><div class="tile"><div class="n">${ab.h}<span class="small muted"> / ${absTotal(ab)}</span></div><div class="l">Hadir bulan ini</div></div>
       <div class="tile"><div class="n">${rata}</div><div class="l">Rata-rata nilai</div></div>
       <div class="tile" style="grid-column:1/-1"><div class="n" style="color:${sisa ? 'var(--bad)' : 'var(--ok)'}">${sisa ? rp(sisa) : 'Lunas ✓'}</div><div class="l">${sisa ? `Tagihan belum dibayar (${due.length})` : 'Tidak ada tagihan tertunggak'}</div></div></div>
+      ${data.pelanggaran && data.pelanggaran.total_poin > 0 ? `<div class="tile" style="margin-bottom:12px"><div class="n" style="color:${data.pelanggaran.total_poin >= 50 ? 'var(--bad)' : 'var(--warn)'}">${data.pelanggaran.total_poin} poin</div><div class="l">Catatan kedisiplinan (lihat di tab Absensi)</div></div>` : ''}
       ${news.length ? `<div class="card news"><h3>Info terbaru</h3><h4>${esc(news[0].judul)}</h4><div class="small muted">${tgl(news[0].tanggal)} · ${esc(news[0].lembaga)}</div><p>${esc(news[0].isi)}</p></div>` : ''}`;
   },
   nilai() {
@@ -77,6 +78,7 @@ const views = {
     const a = data.absensi, b = a.bulan_ini, all = a.semua;
     return `<div class="tiles">${[['H', b.h], ['S', b.s], ['I', b.i], ['A', b.a]].map(([k, v]) => `<div class="tile"><div class="n">${v}</div><div class="l">${ABSEN[k]} · ${esc(bln(a.bulan))}</div></div>`).join('')}</div>
       <div class="card"><h3>Keseluruhan</h3><div class="small">Hadir ${all.h} · Sakit ${all.s} · Izin ${all.i} · Alpa ${all.a}</div></div>
+      ${data.pelanggaran && data.pelanggaran.daftar.length ? `<div class="card"><h3>Catatan kedisiplinan · ${data.pelanggaran.total_poin} poin</h3>${data.pelanggaran.daftar.map((x) => `<div class="item"><div>${esc(x.jenis_nama)}<div class="s">${tgl(x.tanggal)}${x.keterangan ? ' · ' + esc(x.keterangan) : ''}</div></div><div class="r"><b>+${x.poin}</b></div></div>`).join('')}</div>` : ''}
       <div class="card"><h3>14 hari terakhir tercatat</h3>${a.terbaru.length ? `<div class="days">${a.terbaru.map((x) => chip(x.status, tgl(x.tanggal).replace(/ \d{4}$/, '') + ' ' + ABSEN[x.status])).join('')}</div>` : '<div class="empty">Belum ada data.</div>'}</div>`;
   },
   tagihan() {

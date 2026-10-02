@@ -27,6 +27,18 @@ const LEMBAGA = [
   ['MADIN-WUSTHO', 'Madin Wustho Miftahul Ulum', 'Madin'],
 ];
 
+// Jenis pelanggaran bawaan (kode, nama, poin); admin dapat mengubah/menambah per lembaga.
+const JENIS_DEFAULT = [
+  ['terlambat', 'Terlambat', 5], ['seragam', 'Seragam/atribut tidak lengkap', 5], ['rambut', 'Rambut tidak sesuai aturan', 5],
+  ['tugas', 'Tidak mengerjakan tugas', 5], ['gaduh', 'Mengganggu pembelajaran', 10], ['hp', 'Membawa/menggunakan HP', 15],
+  ['jamaah', 'Tidak mengikuti jamaah/kegiatan', 10], ['bolos', 'Bolos/keluar kelas tanpa izin', 20],
+  ['kabur', 'Keluar lingkungan tanpa izin', 30], ['berkelahi', 'Berkelahi', 50], ['merokok', 'Merokok/vape', 50], ['lainnya', 'Pelanggaran lainnya', 5],
+];
+function seedJenis(db, lembagaId) {
+  const ins = db.prepare('INSERT OR IGNORE INTO jenis_pelanggaran (lembaga_id, kode, nama, poin) VALUES (?,?,?,?)');
+  for (const [k, n, p] of JENIS_DEFAULT) ins.run(lembagaId, k, n, p);
+}
+
 // Migrasi skema berversi (PRAGMA user_version). Skema dasar = versi 1; MIGRATIONS[i] membawa ke versi i + 2.
 const MIGRATIONS = [
   `ALTER TABLE lembaga ADD COLUMN ppdb_buka INTEGER NOT NULL DEFAULT 0;
@@ -73,6 +85,24 @@ const MIGRATIONS = [
      ('kecamatan', 'Tambakrejo'),
      ('kabupaten', 'Kabupaten Bojonegoro'),
      ('provinsi', 'Jawa Timur');`,
+  // v5: absensi via WhatsApp, pelanggaran siswa
+  `ALTER TABLE absensi ADD COLUMN keterangan TEXT;
+   ALTER TABLE users ADD COLUMN wa TEXT;
+   CREATE UNIQUE INDEX uq_users_wa ON users(wa) WHERE wa IS NOT NULL;
+   CREATE TABLE jenis_pelanggaran (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id), kode TEXT NOT NULL, nama TEXT NOT NULL,
+     poin INTEGER NOT NULL DEFAULT 0, aktif INTEGER NOT NULL DEFAULT 1, UNIQUE (lembaga_id, kode));
+   CREATE TABLE pelanggaran (
+     id INTEGER PRIMARY KEY, siswa_id INTEGER NOT NULL REFERENCES siswa(id) ON DELETE CASCADE,
+     jenis_id INTEGER REFERENCES jenis_pelanggaran(id) ON DELETE SET NULL, jenis_nama TEXT NOT NULL, poin INTEGER NOT NULL DEFAULT 0,
+     tanggal TEXT NOT NULL, keterangan TEXT, dicatat_oleh TEXT, sumber TEXT NOT NULL DEFAULT 'web', dibuat TEXT NOT NULL DEFAULT (datetime('now')));
+   CREATE INDEX idx_pelanggaran_siswa ON pelanggaran(siswa_id, tanggal);
+   CREATE TABLE wa_log (
+     id INTEGER PRIMARY KEY, message_id TEXT UNIQUE, user_id INTEGER, nomor TEXT, pesan TEXT, balasan TEXT, status TEXT,
+     undo TEXT, sumber TEXT NOT NULL DEFAULT 'wa', dibuat TEXT NOT NULL DEFAULT (datetime('now')));
+   CREATE INDEX idx_wa_log_user ON wa_log(user_id, id);
+   INSERT INTO jenis_pelanggaran (lembaga_id, kode, nama, poin)
+     SELECT l.id, d.kode, d.nama, d.poin FROM lembaga l CROSS JOIN (${JENIS_DEFAULT.map(([k, n, p]) => `SELECT '${k}' kode, '${n}' nama, ${p} poin`).join(' UNION ALL ')}) d;`,
 ];
 
 function migrate(db) {
@@ -134,6 +164,7 @@ function openDb(file) {
   if (!db.prepare('SELECT 1 FROM lembaga LIMIT 1').get()) {
     const ins = db.prepare('INSERT INTO lembaga (kode, nama, jenjang) VALUES (?,?,?)');
     for (const l of LEMBAGA) ins.run(...l);
+    for (const r of db.prepare('SELECT id FROM lembaga').all()) seedJenis(db, r.id);   // hanya saat database baru dibuat
   }
   if (!db.prepare('SELECT 1 FROM tahun_ajaran LIMIT 1').get()) {
     db.prepare('INSERT INTO tahun_ajaran (nama, mulai, selesai, aktif) VALUES (?,?,?,1)').run('2026/2027', '2026-07-01', '2027-06-30');
@@ -141,4 +172,4 @@ function openDb(file) {
   return db;
 }
 
-module.exports = { openDb, hashPassword, verifyPassword };
+module.exports = { openDb, hashPassword, verifyPassword, seedJenis };

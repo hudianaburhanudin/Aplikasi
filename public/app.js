@@ -124,11 +124,12 @@ const JK = [{ value: 'L', label: 'Laki-laki' }, { value: 'P', label: 'Perempuan'
 function crudPage(cfg) {
   return guard(async () => {
     const main = $('#main');
+    const noExp = typeof cfg.noExport === 'function' ? cfg.noExport() : cfg.noExport;
     const filters = cfg.filters ? await Promise.all(cfg.filters.map(async (f) => ({ ...f, options: await f.load() }))) : [];
     main.innerHTML = `<h2>${cfg.title}</h2><div class="bar">
       <input id="q" placeholder="Cari…" type="search">
       ${filters.map((f) => `<select data-f="${f.key}"><option value="">${f.label}</option>${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select>`).join('')}
-      <span class="grow"></span>${(cfg.extra || []).map((b, i) => `<button class="btn" data-x="${i}">${b.label}</button>`).join('')}${cfg.noExport ? '' : '<button class="btn" id="xls">⬇ Excel</button><button class="btn" id="pdf">⬇ PDF</button>'}<button class="btn primary" id="add">+ Tambah</button></div>
+      <span class="grow"></span>${(cfg.extra || []).filter((b) => !b.hide || !b.hide()).map((b, i) => `<button class="btn" data-x="${i}">${b.label}</button>`).join('')}${noExp ? '' : '<button class="btn" id="xls">⬇ Excel</button><button class="btn" id="pdf">⬇ PDF</button>'}<button class="btn primary" id="add">+ Tambah</button></div>
       <div class="tablewrap" id="tbl"></div><p id="foot" class="empty" style="text-align:left"></p>${cfg.note || ''}`;
     filters.forEach((f) => { if (f.def) main.querySelector(`[data-f="${f.key}"]`).value = f.def; });
     const load = guard(async () => {
@@ -162,12 +163,12 @@ function crudPage(cfg) {
     });
     $('#add').onclick = () => form();
     main.querySelectorAll('[data-x]').forEach((b) => { b.onclick = () => cfg.extra[b.dataset.x].run(load); });
-    if (!cfg.noExport) $('#xls').onclick = () => {
+    if (!noExp) $('#xls').onclick = () => {
       const params = { q: $('#q').value };
       main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
       download('export/' + cfg.key + '?' + qs(params));
     };
-    if (!cfg.noExport) $('#pdf').onclick = () => {
+    if (!noExp) $('#pdf').onclick = () => {
       const params = { q: $('#q').value };
       main.querySelectorAll('[data-f]').forEach((s) => { params[s.dataset.f] = s.value; });
       download('pdf/' + cfg.key + '?' + qs(params));
@@ -436,17 +437,18 @@ pages.rapor = guard(async () => {
 pages.pengguna = guard(async () => {
   const lembagaOpts = me.lembagas.map((l) => ({ value: l.id, label: l.nama }));
   const kode = (ids) => ids.map((i) => (me.lembagas.find((l) => l.id === i) || {}).kode).filter(Boolean).join(', ');
-  const roles = me.role === 'yayasan' ? [['yayasan', 'Admin Yayasan (semua lembaga)'], ['admin', 'Admin Lembaga'], ['staf', 'Staf']] : [['staf', 'Staf']];
+  const roles = me.role === 'yayasan' ? [['yayasan', 'Admin Yayasan (semua lembaga)'], ['admin', 'Admin Lembaga'], ['staf', 'Staf'], ['guru', 'Guru (absensi & pelanggaran)']] : [['staf', 'Staf'], ['guru', 'Guru (absensi & pelanggaran)']];
   const load = guard(async () => {
     const rows = await api('users');
     $('#main').innerHTML = `<h2>Pengguna</h2><div class="bar"><span class="grow"></span><button class="btn primary" id="add">+ Tambah</button></div>
-      <div class="tablewrap"><table><thead><tr><th>Username</th><th>Nama</th><th>Peran</th><th>Lembaga</th><th></th></tr></thead><tbody>${rows.map((u) =>
-        `<tr><td>${esc(u.username)}</td><td>${esc(u.nama)}</td><td><span class="badge">${esc(u.role)}</span></td><td>${u.role === 'yayasan' ? 'Semua' : esc(kode(u.lembaga_ids))}</td>
-        <td class="act">${me.role !== 'yayasan' && u.role !== 'staf' ? '' : `<button class="btn small" data-a="edit" data-id="${u.id}">Ubah</button>
+      <div class="tablewrap"><table><thead><tr><th>Username</th><th>Nama</th><th>Peran</th><th>No. WhatsApp</th><th>Lembaga</th><th></th></tr></thead><tbody>${rows.map((u) =>
+        `<tr><td>${esc(u.username)}</td><td>${esc(u.nama)}</td><td><span class="badge">${esc(u.role)}</span></td><td>${esc(u.wa)}</td><td>${u.role === 'yayasan' ? 'Semua' : esc(kode(u.lembaga_ids))}</td>
+        <td class="act">${me.role !== 'yayasan' && u.role !== 'staf' && u.role !== 'guru' ? '' : `<button class="btn small" data-a="edit" data-id="${u.id}">Ubah</button>
         ${u.id === me.id ? '' : `<button class="btn small danger" data-a="del" data-id="${u.id}">Hapus</button>`}`}</td></tr>`).join('')}</tbody></table></div>
-      <p class="empty" style="text-align:left">Kosongkan password saat mengubah jika tidak ingin menggantinya.</p>`;
+      <p class="empty" style="text-align:left">Kosongkan password saat mengubah jika tidak ingin menggantinya. Guru yang hanya memakai WhatsApp tidak perlu password: isi No. WhatsApp saja.</p>`;
     const fields = (edit) => [{ name: 'username', label: 'Username', required: true, ...(edit ? { disabled: true } : {}) }, { name: 'nama', label: 'Nama', required: true },
-      { name: 'password', label: edit ? 'Password baru (opsional)' : 'Password (min. 8)', type: 'password', required: !edit },
+      { name: 'password', label: edit ? 'Password baru (opsional)' : 'Password (min. 8; boleh kosong untuk guru dengan WhatsApp)', type: 'password' },
+      { name: 'wa', label: 'No. WhatsApp (untuk absen/pelanggaran lewat pesan)', full: true },
       { name: 'role', label: 'Peran', blank: false, options: roles.map(([value, label]) => ({ value, label })) },
       { name: 'lembaga_ids', label: 'Lembaga yang boleh diakses (tidak berlaku untuk Admin Yayasan)', type: 'checks', options: lembagaOpts }];
     const save = (row) => async (d) => {
@@ -454,7 +456,7 @@ pages.pengguna = guard(async () => {
       if (row) delete d.username;
       await api(row ? 'users/' + row.id : 'users', { method: row ? 'PUT' : 'POST', body: d }); toast('Tersimpan'); load();
     };
-    $('#add').onclick = () => openForm('Tambah Pengguna', fields(false), { role: roles[roles.length - 1][0] }, save());
+    $('#add').onclick = () => openForm('Tambah Pengguna', fields(false), { role: 'guru' }, save());
     $('#main').onclick = guard(async (e) => {
       const b = e.target.closest('button[data-id]'); if (!b) return;
       const row = rows.find((u) => u.id === Number(b.dataset.id));
@@ -466,15 +468,75 @@ pages.pengguna = guard(async () => {
   load();
 });
 
+// ---- pelanggaran & WhatsApp ----
+const optJenis = async () => (await api('jenis_pelanggaran')).filter((j) => j.aktif).map((j) => ({ value: j.id, label: `${multi() ? j.lembaga_kode + ' · ' : ''}${j.nama} (${j.poin} poin)` }));
+pages.pelanggaran = crudPage({
+  key: 'pelanggaran', title: 'Pelanggaran Siswa', single: 'Pelanggaran', noExport: () => me.role === 'guru',
+  note: '<p class="empty" style="text-align:left">Pelanggaran juga dapat dicatat lewat WhatsApp, mis. <b>langgar andin terlambat</b>. Wali murid dapat melihat catatan anaknya di aplikasi wali.</p>',
+  filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }],
+  extra: [{ label: '🏆 Poin tertinggi', run: guard(async () => {
+    const r = await api('pelanggaran/ringkasan');
+    showInfo('Siswa dengan poin pelanggaran tertinggi', r.length ? `<div class="tablewrap"><table><thead><tr><th>Nama</th><th>Kelas</th><th>Jml</th><th>Poin</th></tr></thead><tbody>${r.slice(0, 30).map((x) =>
+      `<tr><td>${esc(x.nama)}</td><td>${esc(x.kelas_nama)}</td><td>${x.jumlah}</td><td><b>${x.total}</b>${x.total >= 100 ? ' 🔴' : x.total >= 50 ? ' 🟠' : ''}</td></tr>`).join('')}</tbody></table></div><p class="empty" style="text-align:left">🟠 ≥ 50 poin: pemanggilan orang tua · 🔴 ≥ 100 poin: tindak lanjut pimpinan</p>` : '<p class="empty">Belum ada catatan pelanggaran.</p>');
+  }) }],
+  columns: [{ key: 'tanggal', label: 'Tanggal' }, { key: 'siswa_nama', label: 'Siswa' }, { key: 'kelas_nama', label: 'Kelas' }, { key: 'jenis_nama', label: 'Pelanggaran' },
+    { label: 'Poin', render: (r) => `<b>${r.poin}</b>` }, { key: 'keterangan', label: 'Keterangan' }, { key: 'dicatat_oleh', label: 'Dicatat oleh' }, { label: 'Via', render: (r) => (r.sumber === 'wa' ? '💬 WA' : 'web') }],
+  footer: (rows) => `${rows.length} catatan · ${rows.reduce((a, r) => a + r.poin, 0)} poin`,
+  fields: [{ name: 'siswa_id', label: 'Siswa', load: optSiswa, required: true, full: true }, { name: 'jenis_id', label: 'Jenis pelanggaran', load: optJenis, required: true, full: true },
+    { name: 'tanggal', label: 'Tanggal', type: 'date', default: today(), required: true }, { name: 'keterangan', label: 'Keterangan' }],
+});
+pages.jenis = crudPage({
+  key: 'jenis_pelanggaran', title: 'Jenis Pelanggaran & Poin', single: 'Jenis Pelanggaran', noExport: true,
+  note: '<p class="empty" style="text-align:left">Kata kunci WhatsApp memakai <b>kode</b> (mis. <b>langgar andin terlambat</b>). Poin berlaku untuk catatan baru; catatan lama tidak berubah. Jenis yang dinonaktifkan tidak bisa dipilih.</p>',
+  columns: [{ key: 'kode', label: 'Kode' }, { key: 'nama', label: 'Nama' }, { label: 'Poin', render: (r) => `<b>${r.poin}</b>` }, { label: 'Status', render: (r) => (r.aktif ? 'aktif' : '<span class="badge">nonaktif</span>') }],
+  fields: [{ name: 'kode', label: 'Kode (huruf kecil, tanpa spasi)', required: true }, { name: 'nama', label: 'Nama pelanggaran', required: true }, { name: 'poin', label: 'Poin', type: 'number', default: 5, required: true },
+    { name: 'aktif', label: 'Status', blank: false, default: 1, options: [{ value: 1, label: 'Aktif' }, { value: 0, label: 'Nonaktif' }] }],
+});
+
+const waFormat = (t) => esc(t).replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(^|\W)_([^_\n]+)_(?=\W|$)/g, '$1<i>$2</i>');
+pages.whatsapp = guard(async () => {
+  const [st, log] = await Promise.all([api('wa/status'), api('wa/log')]);
+  const mode = st.provider === 'none' ? '<span class="badge">belum tersambung (mode uji)</span>' : `<span class="badge">tersambung: ${esc(st.provider)}</span>`;
+  const chat = [];
+  $('#main').innerHTML = `<h2>WhatsApp</h2>
+    <div class="grid2"><div class="card"><b>Status</b><p style="margin:8px 0">${mode}</p>
+      <p class="empty" style="text-align:left;padding:0">Petugas mengirim pesan ke <b>satu nomor WhatsApp sekolah</b>. Pesan hanya diproses bila nomor pengirim terdaftar di menu <a href="#/pengguna">Pengguna</a> (kolom No. WhatsApp). Alamat webhook untuk penyedia WhatsApp: <code>${esc(location.origin)}/api/wa/webhook</code></p>
+      <b>Nomor terdaftar (${st.penerima.length})</b>
+      ${st.penerima.length ? `<div class="tablewrap" style="margin-top:6px"><table><tbody>${st.penerima.map((p) => `<tr><td>${esc(p.nama)}</td><td><span class="badge">${esc(p.role)}</span></td><td>${esc(p.wa)}</td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="empty">Belum ada. Tambahkan pengguna berperan Guru dengan No. WhatsApp di menu Pengguna.</p>'}</div>
+    <div class="card"><b>Contoh perintah</b><div class="wa-help">${waFormat(st.bantuan)}</div></div></div>
+    <div class="card" style="margin-top:12px"><b>Uji coba perintah</b>
+      <p class="empty" style="text-align:left;padding:4px 0 8px">Mencoba seolah-olah pesan dikirim dari nomor petugas. <b>Data tersimpan sungguhan</b>; ketik <b>batal</b> untuk membatalkan.</p>
+      ${st.penerima.length ? `<div class="bar"><select id="wu">${st.penerima.map((p) => `<option value="${p.id}">${esc(p.nama)} (${esc(p.wa)})</option>`).join('')}</select></div>
+      <div class="chat" id="chat"><div class="bub in">Halo! Ketik <b>bantuan</b> untuk melihat perintah.</div></div>
+      <div class="chips">${['absen 7A andin sakit', 'absen 7A semua hadir', 'langgar andin terlambat', 'rekap', 'jenis', 'batal', 'bantuan'].map((c) => `<button class="btn small chip" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      <form id="wf" class="bar" style="margin-top:8px"><input id="wm" placeholder="Tulis pesan, mis. absen 7A andin sakit, budi izin" style="flex:1;min-width:200px" autocomplete="off"><button class="btn primary">Kirim</button></form>`
+      : '<p class="empty">Tambahkan nomor petugas dulu untuk mencoba.</p>'}</div>
+    <h2 style="margin-top:20px">Riwayat pesan</h2>
+    <div class="tablewrap">${log.length ? `<table><thead><tr><th>Waktu (UTC)</th><th>Pengirim</th><th>Pesan</th><th>Hasil</th></tr></thead><tbody>${log.map((l) =>
+      `<tr><td class="nw">${esc(l.dibuat)}</td><td>${esc(l.pengirim || l.nomor || '-')}${l.sumber === 'simulasi' ? ' <span class="badge">uji</span>' : ''}</td><td style="max-width:340px;white-space:pre-wrap">${esc(String(l.pesan).slice(0, 160))}</td><td class="nw"><span class="badge">${esc(l.status)}</span></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada pesan.</div>'}</div>`;
+  if (!st.penerima.length) return;
+  const render = () => { const c = $('#chat'); c.innerHTML = '<div class="bub in">Halo! Ketik <b>bantuan</b> untuk melihat perintah.</div>' + chat.map((m) => `<div class="bub ${m.dari}">${waFormat(m.teks).replace(/\n/g, '<br>')}</div>`).join(''); c.scrollTop = c.scrollHeight; };
+  const kirim = guard(async (teks) => {
+    if (!teks.trim()) return;
+    chat.push({ dari: 'out', teks }); render();
+    const r = await api('wa/simulasi', { method: 'POST', body: { user_id: Number($('#wu').value), pesan: teks } });
+    chat.push({ dari: 'in', teks: r.balasan || '(tidak ada balasan)' }); render();
+  });
+  $('#wf').onsubmit = (e) => { e.preventDefault(); const v = $('#wm').value; $('#wm').value = ''; kirim(v); };
+  document.querySelectorAll('.chip').forEach((b) => { b.onclick = () => { $('#wm').value = b.dataset.c; $('#wm').focus(); }; });
+});
+
 // ---- shell ----
-const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'];
-const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', ALL],
-  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['pengguna', 'Pengguna', ADM],
+const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'], GURU = ['yayasan', 'admin', 'staf', 'guru'];
+const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', GURU], ['pelanggaran', 'Pelanggaran', GURU],
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['pengguna', 'Pengguna', ADM],
   ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']]];
 
 function route() {
-  const name = location.hash.slice(2) || 'dashboard';
-  const page = pages[name] || pages.dashboard;
+  const awal = me.role === 'guru' ? 'absensi' : 'dashboard';
+  const name = location.hash.slice(2) || awal;
+  const page = pages[name] || pages[awal];
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.p === name));
   $('#main').onclick = null; page();
 }
