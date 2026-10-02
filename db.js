@@ -61,6 +61,18 @@ const MIGRATIONS = [
      id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id), judul TEXT NOT NULL, isi TEXT NOT NULL,
      tanggal TEXT NOT NULL, dibuat_oleh TEXT);
    CREATE INDEX idx_pengumuman ON pengumuman(lembaga_id, id);`,
+  // v4: profil yayasan (data legalitas; hanya untuk admin yayasan, tidak dicetak)
+  `CREATE TABLE pengaturan (kunci TEXT PRIMARY KEY, nilai TEXT);
+   INSERT INTO pengaturan (kunci, nilai) VALUES
+     ('nama_yayasan', 'Yayasan Miftahul Ulumillah'),
+     ('sk_pengesahan', 'AHU-0004853.AH.01.04.Tahun 2015'),
+     ('sk_perubahan', 'AHU-AH.01.06-0008992'),
+     ('tanggal_sk_perubahan', '2024-02-07'),
+     ('akta_notaris', 'No. 01 tanggal 5 Februari 2024, Notaris Laila, S.H. (Kab. Bojonegoro)'),
+     ('alamat', 'Jalan Kartini RT 06 RW 02'),
+     ('kecamatan', 'Tambakrejo'),
+     ('kabupaten', 'Kabupaten Bojonegoro'),
+     ('provinsi', 'Jawa Timur');`,
 ];
 
 function migrate(db) {

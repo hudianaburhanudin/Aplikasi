@@ -116,6 +116,7 @@ const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
 const ABSEN = new Set(['H', 'S', 'I', 'A']);
 const ROLES = ['yayasan', 'admin', 'staf']; // 'wali' dikelola lewat /api/wali-akun
 const MIN_PW = 8;
+const PROFIL_KEYS = ['nama_yayasan', 'sk_pengesahan', 'sk_perubahan', 'tanggal_sk_perubahan', 'akta_notaris', 'alamat', 'kecamatan', 'kabupaten', 'provinsi'];
 const PW_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
 const genPassword = () => Array.from({ length: 10 }, () => PW_CHARS[crypto.randomInt(PW_CHARS.length)]).join('');
 const normPhone = (v) => { const d = String(v || '').replace(/\D/g, ''); return d.startsWith('62') ? '0' + d.slice(2) : d; };
@@ -746,6 +747,16 @@ function createApp(dbFile) {
     if (name === 'pendaftar' && parts[2] === 'terima' && method === 'POST') return send(res, 200, terimaPendaftar(id, await readBody(req), ctx));
     if (name === 'kenaikan' && method === 'POST') return send(res, 200, kenaikan(await readBody(req), ctx));
     if (name === 'riwayat') return send(res, 200, riwayat(q, ctx));
+    if (name === 'profil') {
+      if (ctx.user.role !== 'yayasan') throw new HttpError(403, 'Hanya admin yayasan yang dapat melihat profil yayasan');
+      if (method === 'PUT') {
+        const b = await readBody(req);
+        const up = db.prepare('INSERT INTO pengaturan (kunci, nilai) VALUES (?, ?) ON CONFLICT (kunci) DO UPDATE SET nilai = excluded.nilai');
+        for (const k of PROFIL_KEYS) if (k in b) up.run(k, str(b[k], 300));
+      }
+      const rows = db.prepare(`SELECT kunci, nilai FROM pengaturan WHERE kunci IN (${ph(PROFIL_KEYS)})`).all(...PROFIL_KEYS);
+      return send(res, 200, Object.fromEntries(rows.map((r) => [r.kunci, r.nilai])));
+    }
     if (name === 'dashboard') return send(res, 200, dashboard(ctx));
     if (name === 'rapor') return send(res, 200, rapor(q, ctx));
     if (name === 'rekap-absensi') return send(res, 200, rekapAbsensi(q, ctx));

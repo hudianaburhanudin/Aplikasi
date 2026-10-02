@@ -346,6 +346,17 @@ pages.kenaikan = guard(async () => {
   refresh();
 });
 
+pages.profil = guard(async () => {
+  const d = await api('profil');
+  const F = [['nama_yayasan', 'Nama yayasan'], ['sk_pengesahan', 'Nomor SK pengesahan badan hukum'], ['sk_perubahan', 'Nomor SK/SP perubahan terakhir'],
+    ['tanggal_sk_perubahan', 'Tanggal SK/SP perubahan', 'date'], ['akta_notaris', 'Akta notaris'], ['alamat', 'Alamat'], ['kecamatan', 'Kecamatan'], ['kabupaten', 'Kabupaten'], ['provinsi', 'Provinsi']];
+  $('#main').innerHTML = `<h2>Profil Yayasan</h2><p class="empty" style="text-align:left;padding:0 0 12px">Data legalitas untuk kelengkapan administrasi. Hanya admin yayasan yang dapat melihatnya; tidak dicetak di dokumen.</p>
+    <form id="pf" class="card" style="max-width:720px;display:grid;gap:12px"><div class="fields">${F.map(([k, l, t]) =>
+      `<label class="full">${esc(l)}<input name="${k}" type="${t || 'text'}" value="${esc(d[k])}" maxlength="300"></label>`).join('')}</div>
+    <div class="actions"><button class="btn primary">Simpan</button></div></form>`;
+  $('#pf').onsubmit = guard(async (e) => { e.preventDefault(); await api('profil', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); toast('Profil yayasan disimpan'); });
+});
+
 // ---- dashboard ----
 pages.dashboard = guard(async () => {
   const d = await api('dashboard');
@@ -458,7 +469,7 @@ pages.pengguna = guard(async () => {
 const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'];
 const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', ALL],
   ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['pengguna', 'Pengguna', ADM],
-  ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']]];
+  ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']]];
 
 function route() {
   const name = location.hash.slice(2) || 'dashboard';

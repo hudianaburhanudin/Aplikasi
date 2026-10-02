@@ -325,3 +325,21 @@ test('portal wali murid, tagihan, dan pengumuman', async (t) => {
   for (let i = 0; i < 10; i++) await bf('login', 'POST', { username: 'target', password: 'x' });
   assert.strictEqual((await bf('login', 'POST', { username: 'target', password: 'x' })).status, 429);
 });
+
+test('profil yayasan hanya untuk admin yayasan', async (t) => {
+  const { client } = await boot(t);
+  const yys = client(); const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const p = (await yys('profil')).data;
+  assert.strictEqual(p.sk_pengesahan, 'AHU-0004853.AH.01.04.Tahun 2015');
+  assert.strictEqual((await yys('profil', 'PUT', { alamat: 'Jl. Kartini No. 1', bukan_kunci: 'x' })).data.alamat, 'Jl. Kartini No. 1');
+  assert.strictEqual((await yys('profil')).data.bukan_kunci, undefined);
+  const SMP = me.lembagas.find((l) => l.kode === 'SMP').id;
+  await yys('users', 'POST', { username: 'adminsmp', password: 'rahasia1', nama: 'A', role: 'admin', lembaga_ids: [SMP] });
+  const adm = client(); await adm('login', 'POST', { username: 'adminsmp', password: 'rahasia1' });
+  await adm('password', 'POST', { lama: 'rahasia1', baru: 'rahasia2x' });
+  assert.strictEqual((await adm('profil')).status, 403);
+  assert.strictEqual((await adm('profil', 'PUT', { alamat: 'x' })).status, 403);
+  // tidak tercetak di PDF
+  const pdf = (await yys('pdf/siswa')).data.toString('latin1');
+  assert.strictEqual(pdf.includes('AHU'), false);
+});
