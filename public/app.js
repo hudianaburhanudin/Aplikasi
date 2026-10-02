@@ -4,6 +4,7 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const rp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const logoUrl = (k) => '/logo/' + String(k || 'yayasan').toLowerCase() + '.png';
 let me = null;
 let scope = 'all'; // lembaga aktif: id atau 'all'
 const multi = () => me.lembagas.length > 1 && scope === 'all';
@@ -419,7 +420,7 @@ pages.rapor = guard(async () => {
     if (!$('#s').value) { $('#out').innerHTML = '<div class="empty">Belum ada siswa.</div>'; return; }
     const d = await api('rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
     const s = d.siswa, a = d.absensi, avg = d.nilai.length ? (d.nilai.reduce((x, n) => x + n.rata, 0) / d.nilai.length).toFixed(1) : '-';
-    $('#out').innerHTML = `<div class="rapor"><h3>LAPORAN HASIL BELAJAR</h3><div style="text-align:center;color:var(--mut)">${d.semester ? 'Semester ' + esc(d.semester) : 'Semua semester'}</div>
+    $('#out').innerHTML = `<div class="rapor"><img class="rapor-logo" src="${logoUrl(s.lembaga_kode)}" alt=""><h3>LAPORAN HASIL BELAJAR</h3><div style="text-align:center;font-weight:600">${esc(s.lembaga_nama || '')}</div><div style="text-align:center;color:var(--mut)">${d.semester ? 'Semester ' + esc(d.semester) : 'Semua semester'}</div>
       <dl><dt>Nama</dt><dd>${esc(s.nama)}</dd><dt>NIS</dt><dd>${esc(s.nis)}</dd><dt>Kelas</dt><dd>${esc(s.kelas_nama)}</dd><dt>Wali kelas</dt><dd>${esc(s.wali_kelas)}</dd></dl>
       <table><thead><tr><th>Mata pelajaran</th><th>Jml nilai</th><th>Rata-rata</th></tr></thead><tbody>${d.nilai.map((n) =>
         `<tr><td>${esc(n.mapel)}</td><td>${n.jumlah}</td><td>${n.rata}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Belum ada nilai.</td></tr>'}
@@ -477,6 +478,10 @@ function route() {
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.p === name));
   $('#main').onclick = null; page();
 }
+function updateBrand() {
+  const l = scope === 'all' ? null : me.lembagas.find((x) => x.id === scope);
+  $('#brandLogo').src = logoUrl(l ? l.kode : 'yayasan');
+}
 function showLogin() { me = null; $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
 function forcePassword() {
   openForm('Buat password baru (wajib)', [{ name: 'lama', label: 'Password saat ini', type: 'password', required: true, full: true },
@@ -498,6 +503,7 @@ function showApp() {
     sw.value = String(scope);
   } else sw.classList.add('hidden');
   $('#lembagaName').textContent = me.lembagas.length === 1 ? me.lembagas[0].nama : '';
+  updateBrand();
   if (me.must_change) { forcePassword(); return; }
   route();
 }
@@ -509,7 +515,7 @@ $('#loginForm').onsubmit = async (e) => {
 $('#lembaga').onchange = (e) => {
   scope = e.target.value === 'all' ? 'all' : Number(e.target.value);
   try { localStorage.setItem('lembaga', String(scope)); } catch {}
-  route();
+  updateBrand(); route();
 };
 $('#logoutBtn').onclick = async () => { await api('logout', { method: 'POST' }).catch(() => {}); showLogin(); };
 $('#pwBtn').onclick = () => openForm('Ganti Password', [{ name: 'lama', label: 'Password lama', type: 'password', required: true, full: true },

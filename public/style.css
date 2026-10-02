@@ -8,7 +8,10 @@ body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var
 .login h1{margin:0;font-size:20px}
 .app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
 .sidebar{background:#16213e;color:#dfe5f5;padding:16px 10px;display:flex;flex-direction:column;gap:12px;position:sticky;top:0;height:100vh;overflow-y:auto}
-.brand{font-weight:700;font-size:18px;padding:0 8px}
+.brand{font-weight:700;font-size:18px;padding:0 8px;display:flex;align-items:center;gap:10px}
+.logo-chip{background:#fff;border-radius:10px;padding:3px;display:inline-grid;place-items:center;flex:none}.logo-chip img{width:34px;height:34px;object-fit:contain;display:block}
+.login-logo{width:96px;height:96px;object-fit:contain;margin:0 auto}.login h1{text-align:center}
+.rapor{position:relative}.rapor-logo{position:absolute;left:24px;top:18px;height:64px;width:64px;object-fit:contain}
 #nav{display:grid;gap:2px;flex:1;align-content:start}
 #nav a{color:inherit;text-decoration:none;padding:7px 10px;border-radius:6px}
 #nav a:hover{background:#ffffff14}#nav a.on{background:var(--pri);color:#fff}

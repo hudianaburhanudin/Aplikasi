@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Yayasan Miftahul Ulumillah</title>
+<link rel="icon" href="/icons/favicon-64.png" type="image/png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="login" class="login hidden">
   <form id="loginForm" class="card">
-    <h1>🏫 Yayasan Miftahul Ulumillah</h1>
+    <img src="/logo/yayasan.png" alt="Logo Yayasan Miftahul Ulumillah" class="login-logo">
+    <h1>Yayasan Miftahul Ulumillah</h1>
     <label>Username <input name="username" autocomplete="username" required autofocus></label>
     <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
     <p class="error" id="loginError"></p>
@@ -19,7 +21,7 @@
 </div>
 <div id="app" class="app hidden">
   <aside class="sidebar">
-    <div class="brand">🏫 Miftahul Ulum</div>
+    <div class="brand"><span class="logo-chip"><img id="brandLogo" src="/logo/yayasan.png" alt="" width="34" height="34"></span><span>Miftahul Ulum</span></div>
     <select id="lembaga" class="hidden"></select><div id="lembagaName" class="lname"></div>
     <nav id="nav"></nav>
     <div class="who"><span id="who"></span>

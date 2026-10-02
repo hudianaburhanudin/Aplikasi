@@ -4,10 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pendaftaran Siswa Baru - Yayasan Miftahul Ulumillah</title>
+<link rel="icon" href="/icons/favicon-64.png" type="image/png">
 <link rel="stylesheet" href="style.css">
 <style>
   body{display:block}.wrap{max-width:640px;margin:0 auto;padding:20px 14px 60px}
-  .wrap h1{font-size:22px;margin:8px 0 4px}.wrap p.sub{color:var(--mut);margin:0 0 16px}
+  .wrap h1{font-size:22px;margin:8px 0 4px}.dlogo{width:84px;height:84px;object-fit:contain;display:block}.wrap p.sub{color:var(--mut);margin:0 0 16px}
   .card{margin-bottom:16px}.card h2{font-size:16px;margin:0 0 12px}
   .fields .full{grid-column:1/-1}.hp{position:absolute;left:-9999px;height:0;overflow:hidden}
   .ok{background:#e9f7ef;border:1px solid #b7e1c8}.nomor{font-size:26px;font-weight:700;letter-spacing:.04em;margin:6px 0}
@@ -16,7 +17,8 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>🏫 Pendaftaran Siswa Baru</h1>
+  <img id="logoDaftar" src="/logo/yayasan.png" alt="Logo" class="dlogo">
+  <h1>Pendaftaran Siswa Baru</h1>
   <p class="sub">Yayasan Miftahul Ulumillah <span id="tahun"></span></p>
 
   <div id="hasil" class="card ok hidden"></div>

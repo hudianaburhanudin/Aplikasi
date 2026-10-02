@@ -1,6 +1,8 @@
 'use strict';
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const logoUrl = (k) => '/logo/' + String(k || 'yayasan').toLowerCase() + '.png';
+let KODE = {};
 const LABEL = { baru: 'Pendaftaran diterima, menunggu verifikasi', terverifikasi: 'Berkas terverifikasi, dalam proses seleksi', diterima: 'DITERIMA 🎉 Silakan menunggu informasi daftar ulang dari sekolah',
   cadangan: 'Masuk daftar cadangan', ditolak: 'Mohon maaf, belum dapat diterima', terdaftar: 'Sudah terdaftar sebagai siswa' };
 
@@ -13,7 +15,9 @@ async function post(path, body) {
 
 fetch('/api/public/lembaga').then((r) => r.json()).then((d) => {
   $('#tahun').textContent = d.tahun_ajaran ? '· Tahun Ajaran ' + d.tahun_ajaran : '';
+  d.lembaga.forEach((l) => { KODE[l.id] = l.kode; });
   const sel = $('[name=lembaga_id]');
+  sel.onchange = () => { $('#logoDaftar').src = logoUrl(KODE[sel.value] || 'yayasan'); };
   sel.innerHTML = '<option value=""></option>' + d.lembaga.map((l) => `<option value="${l.id}">${esc(l.nama)}</option>`).join('');
   if (!d.lembaga.length) { $('#tutup').classList.remove('hidden'); $('#fields').classList.add('hidden'); $('#kirim').classList.add('hidden'); }
 });

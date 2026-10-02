@@ -7,6 +7,7 @@ const tgl = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('id-ID', { d
 const bln = (p) => p ? new Date(p + '-01T00:00:00').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }) : '';
 const ABSEN = { H: 'Hadir', S: 'Sakit', I: 'Izin', A: 'Alpa' };
 
+const logoUrl = (k) => '/logo/' + String(k || 'yayasan').toLowerCase() + '.png';
 let me = null, anak = [], cur = null, data = null, news = [], tab = 'beranda', installEvt = null;
 
 async function api(path, opt = {}) {
@@ -59,8 +60,8 @@ const views = {
     const sisa = due.reduce((x, t) => x + t.sisa, 0), rata = data.nilai.rata.length ? (data.nilai.rata.reduce((x, n) => x + n.rata, 0) / data.nilai.rata.length).toFixed(1) : '-';
     const install = installEvt ? '<div class="install">📲 Pasang aplikasi ini di layar utama HP Anda. <button class="btn primary" id="install" style="margin-top:8px;width:100%">Pasang aplikasi</button></div>'
       : (/iphone|ipad/i.test(navigator.userAgent) && !navigator.standalone ? '<div class="install">📲 Untuk memasang di iPhone: ketuk tombol <b>Bagikan</b> lalu <b>Tambah ke Layar Utama</b>.</div>' : '');
-    return `${install}<div class="card hero"><b>${esc(s.nama)}</b><div>${esc(s.lembaga_nama)}</div><div>Kelas ${esc(s.kelas_nama || '-')} · NIS ${esc(s.nis || '-')}</div>
-      <div>Wali kelas: ${esc(s.wali_kelas || '-')}</div>${s.status !== 'aktif' ? '<div>' + chip('belum', 'Status: ' + s.status) + '</div>' : ''}</div>
+    return `${install}<div class="card hero"><img class="hero-logo" src="${logoUrl(s.lembaga_kode)}" alt=""><div class="t"><b>${esc(s.nama)}</b><div>${esc(s.lembaga_nama)}</div><div>Kelas ${esc(s.kelas_nama || '-')} · NIS ${esc(s.nis || '-')}</div>
+      <div>Wali kelas: ${esc(s.wali_kelas || '-')}</div>${s.status !== 'aktif' ? '<div>' + chip('belum', 'Status: ' + s.status) + '</div>' : ''}</div></div>
       <div class="tiles"><div class="tile"><div class="n">${ab.h}<span class="small muted"> / ${absTotal(ab)}</span></div><div class="l">Hadir bulan ini</div></div>
       <div class="tile"><div class="n">${rata}</div><div class="l">Rata-rata nilai</div></div>
       <div class="tile" style="grid-column:1/-1"><div class="n" style="color:${sisa ? 'var(--bad)' : 'var(--ok)'}">${sisa ? rp(sisa) : 'Lunas ✓'}</div><div class="l">${sisa ? `Tagihan belum dibayar (${due.length})` : 'Tidak ada tagihan tertunggak'}</div></div></div>

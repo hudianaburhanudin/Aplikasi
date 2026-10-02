@@ -21,7 +21,8 @@ nav button{background:none;border:0;padding:8px 2px;font-size:11px;color:var(--m
 nav button span{font-size:22px;line-height:1}nav button.on{color:var(--pri);font-weight:700}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
 .card h3{margin:0 0 8px;font-size:15px}
-.hero b{font-size:19px}.hero div{color:var(--mut);font-size:14px}
+.hero{display:flex;gap:12px;align-items:center}.hero .t{min-width:0}.hero b{font-size:19px}.hero .t div{color:var(--mut);font-size:14px}
+.hero-logo{width:60px;height:60px;object-fit:contain;background:#fff;border-radius:12px;padding:4px;flex:none}.logo{object-fit:contain}
 .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
 .tile{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:12px}.tile .n{font-size:24px;font-weight:700}.tile .l{font-size:12px;color:var(--mut)}
 .chip{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600;background:var(--bd)}
