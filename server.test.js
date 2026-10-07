@@ -1634,3 +1634,105 @@ test('penyusun jadwal awal tahun: pengaturan sesi, beban mengajar, batas guru, p
   assert.strictEqual((await admMI('jadwal-susun', 'POST', { kelas_ids: [K['7A']] })).status, 400);
   assert.strictEqual((await admMI('guru-batas', 'PUT', { guru_id: G['Pak Ahmad'], libur: [1] })).status, 404);
 });
+
+test('pondok pesantren: siswa sekolah menjadi santri, kamar & kapasitas, izin pulang, dashboard, impor kamar', async (t) => {
+  const { buildXlsx } = require('./xlsx');
+  const { readXlsx } = require('./xlsx-read');
+  const { client } = await boot(t);
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [PON, SMP, MI] = [id('PONPES'), id('SMP'), id('MI')];
+  assert.strictEqual(me.lembagas.find((l) => l.kode === 'PONPES').jenjang, 'Pesantren');
+  const masuk = async (u, p = 'rahasia123') => { const c = client(); await c('login', 'POST', { username: u, password: p }); await c('password', 'POST', { lama: p, baru: 'rahasia456' }); return c; };
+
+  const kSMP = (await yys('kelas', 'POST', { nama: 'VII' }, SMP)).data.id, kMI = (await yys('kelas', 'POST', { nama: '5' }, MI)).data.id;
+  const a = (await yys('siswa', 'POST', { nama: 'Andin', nis: '1', nisn: '1111111111', nik: '3522000000000001', kelas_id: kSMP, nama_ayah: 'Pak Andin', wali: 'Pak Andin', telepon: '0813' }, SMP)).data.id;
+  const b = (await yys('siswa', 'POST', { nama: 'Budi', nis: '2', nisn: '2222222222', kelas_id: kSMP }, SMP)).data.id;
+  const c = (await yys('siswa', 'POST', { nama: 'Citra MI', nis: '3', kelas_id: kMI }, MI)).data.id;
+  await yys('siswa', 'PUT', { status: 'pindah' }, null);   // tidak berdampak
+  // wali satu akun untuk Andin di SMP
+  const wk = (await yys('wali-akun', 'POST', { siswa_id: a, username: '081300000099' })).data;
+
+  // admin SMP (hanya SMP) mendaftarkan siswanya ke pondok
+  await yys('users', 'POST', { username: 'adminsmp', password: 'rahasia123', nama: 'A', role: 'admin', lembaga_ids: [SMP] });
+  await yys('users', 'POST', { username: 'adminpon', password: 'rahasia123', nama: 'P', role: 'admin', lembaga_ids: [PON] });
+  await yys('users', 'POST', { username: 'gurusmp', password: 'rahasia123', nama: 'G', role: 'guru', lembaga_ids: [SMP] });
+  const [aSMP, aPON, guru] = [await masuk('adminsmp'), await masuk('adminpon'), await masuk('gurusmp')];
+  assert.deepStrictEqual((await aSMP('santri-tujuan')).data.map((x) => x.kode), ['PONPES']);
+  assert.strictEqual((await aSMP('siswa', 'GET', null, PON)).status, 403);                         // admin SMP tidak melihat data pondok
+  assert.strictEqual((await guru('santri-daftar', 'POST', { siswa_ids: [a] })).status, 403);
+  assert.strictEqual((await aSMP('santri-daftar', 'POST', { siswa_ids: [c] })).status, 404);       // siswa lembaga lain
+  assert.strictEqual((await aSMP('santri-daftar', 'POST', { siswa_ids: [] })).status, 400);
+  const r1 = (await aSMP('santri-daftar', 'POST', { siswa_ids: [a, b], mukim: 'mukim', kelas_id: 999 })).data;
+  assert.deepStrictEqual([r1.dibuat, r1.dilewati.length, r1.pondok.kode, r1.kelas_diatur], [2, 0, 'PONPES', false]);
+  assert.match(r1.catatan, /admin pondok/);
+  const santri = (await aPON('siswa', 'GET', null, PON)).data;
+  const sa = santri.find((x) => x.nama === 'Andin');
+  assert.deepStrictEqual([santri.length, sa.nisn, sa.mukim, sa.nama_ayah, sa.asal_lembaga, sa.asal_kelas, sa.nis, sa.siswa_sumber_id], [2, '1111111111', 'mukim', 'Pak Andin', 'SMP', 'VII', null, a]);
+  const r2 = (await aSMP('santri-daftar', 'POST', { siswa_ids: [a, b] })).data;                     // ulang: tidak digandakan
+  assert.deepStrictEqual([r2.dibuat, r2.dilewati.length], [0, 2]);
+  assert.strictEqual((await aPON('siswa', 'GET', null, PON)).data.length, 2);
+  // wali melihat anaknya di SMP dan di pondok
+  const wali = await masuk('081300000099', wk.password);
+  const anak = (await wali('wali/anak')).data;
+  assert.deepStrictEqual(anak.map((x) => x.lembaga_nama).sort(), ['Pondok Pesantren Miftahul Ulum', 'SMP Plus Miftahul Ulum Tambakrejo']);
+  // yayasan mendaftarkan sekaligus menentukan kelas dan kamar pondok
+  const kPon = (await yys('kelas', 'POST', { nama: 'Wustho' }, PON)).data.id;
+  const kam = (await yys('kamar', 'POST', { nama: 'Al-Ghazali 1', gedung: 'Putra', kapasitas: 2 }, PON)).data.id;
+  const kam2 = (await yys('kamar', 'POST', { nama: 'Al-Ghazali 2', gedung: 'Putra' }, PON)).data.id;
+  const c2 = (await yys('siswa', 'POST', { nama: 'Dedi', nis: '4', nisn: '4444444444', kelas_id: kSMP }, SMP)).data.id;
+  const r3 = (await yys('santri-daftar', 'POST', { siswa_ids: [c2], kelas_id: kPon, kamar_id: kam, mukim: 'laju' }, PON)).data;
+  assert.deepStrictEqual([r3.dibuat, r3.kelas_diatur, r3.kamar_diatur], [1, true, true]);
+  assert.strictEqual((await yys('santri-daftar', 'POST', { siswa_ids: [c2], kelas_id: kPon }, PON)).data.dilewati.length, 1);                      // sudah santri
+  assert.strictEqual((await yys('santri-daftar', 'POST', { siswa_ids: [b], kelas_id: kSMP }, PON)).status, 404);                                  // kelas bukan milik pondok
+
+  // kamar: validasi, kapasitas, penempatan
+  assert.strictEqual((await yys('kamar', 'POST', { nama: 'X', kapasitas: 0 }, PON)).status, 400);
+  assert.strictEqual((await yys('kamar', 'POST', { nama: 'Al-Ghazali 1' }, PON)).status, 409);                                                      // nama ganda
+  assert.strictEqual((await yys('kamar', 'POST', { nama: 'Kamar SMP' }, SMP)).status, 200);                                                         // kamar boleh di lembaga manapun, tetapi...
+  const ids = santri.map((x) => x.id);
+  assert.strictEqual((await yys('kamar-tempat', 'POST', { kamar_id: kam, siswa_ids: ids }, PON)).status, 409);                                      // 2 + 1 penghuni > kapasitas 2
+  assert.strictEqual((await yys('kamar-tempat', 'POST', { kamar_id: kam2, siswa_ids: ids }, PON)).data.jumlah, 2);
+  assert.strictEqual((await yys('kamar-tempat', 'POST', { kamar_id: kam, siswa_ids: [ids[0], 999999] }, PON)).status, 404);
+  assert.deepStrictEqual((await yys('kamar', 'GET', null, PON)).data.map((k) => [k.nama, k.terisi]), [['Al-Ghazali 1', 1], ['Al-Ghazali 2', 2]]);
+  assert.strictEqual((await yys('kamar-tempat', 'POST', { kamar_id: kam, siswa_ids: [ids[0]] }, PON)).data.jumlah, 1);
+  assert.strictEqual((await yys(`siswa/${ids[1]}`, 'PUT', { mukim: 'asal' }, PON)).status, 400);
+  assert.strictEqual((await yys(`siswa/${ids[1]}`, 'PUT', { kamar_id: kam, mukim: 'mukim' }, PON)).status, 200);
+  assert.strictEqual((await yys(`siswa/${a}`, 'PUT', { kamar_id: kam }, SMP)).status, 404);                                                         // kamar lembaga lain
+  assert.strictEqual((await aSMP('kamar', 'GET')).data.length, 1);                                                                                  // admin SMP hanya melihat kamar lembaganya
+
+  // izin santri
+  const hari = (n) => new Date(Date.now() + 7 * 3600e3 + n * 86400e3).toISOString().slice(0, 10);
+  const s0 = ids[0];
+  assert.strictEqual((await yys('izin_santri', 'POST', { siswa_id: s0, tgl_pergi: hari(0), tgl_kembali: hari(-1) }, PON)).status, 400);
+  assert.strictEqual((await yys('izin_santri', 'POST', { siswa_id: s0, tgl_pergi: 'besok', tgl_kembali: hari(2) }, PON)).status, 400);
+  assert.strictEqual((await yys('izin_santri', 'POST', { siswa_id: a, tgl_pergi: hari(0), tgl_kembali: hari(2) }, SMP)).status, 200);                // siswa SMP: boleh dicatat (generik), diuji di bawah
+  const i1 = (await yys('izin_santri', 'POST', { siswa_id: s0, jenis: 'pulang', tgl_pergi: hari(-5), tgl_kembali: hari(-1), alasan: 'Pulang kampung', penjemput: 'Ayah' }, PON)).data.id;
+  const i2 = (await aPON('izin_santri', 'POST', { siswa_id: ids[1], tgl_pergi: hari(0), tgl_kembali: hari(3) })).data.id;
+  const il = (await aPON('izin_santri')).data;
+  assert.deepStrictEqual(il.map((x) => [x.id, x.status]), [[i1, 'terlambat'], [i2, 'izin']]);
+  assert.strictEqual((await aPON('izin_santri?status=terlambat')).data.length, 1);
+  const dash = (await yys('dashboard', 'GET', null, PON)).data.pesantren;
+  assert.deepStrictEqual([dash.santri, dash.mukim, dash.izin_keluar, dash.izin_terlambat.length], [3, 2, 2, 1]);
+  assert.strictEqual((await yys('dashboard', 'GET', null, SMP)).data.pesantren, undefined);                                                          // sekolah biasa: tanpa blok pondok
+  await aPON(`izin_santri/${i1}`, 'PUT', { tgl_kembali_nyata: hari(0) });
+  assert.strictEqual((await aPON(`izin_santri/${i1}`)).data.status, 'kembali');
+  assert.strictEqual((await aPON(`izin_santri/${i1}`, 'PUT', { tgl_kembali_nyata: hari(-9) })).status, 400);
+  assert.strictEqual((await aSMP('izin_santri')).data.every((x) => x.lembaga_kode === 'SMP'), true);
+  // wali melihat izin anaknya di pondok
+  const anakPon = (await wali('wali/anak')).data.find((x) => x.lembaga_kode === 'PONPES');
+  await yys('izin_santri', 'POST', { siswa_id: anakPon.id, tgl_pergi: hari(0), tgl_kembali: hari(1), alasan: 'Acara keluarga' }, PON);
+  const dw = (await wali('wali/anak/' + anakPon.id)).data;
+  assert.deepStrictEqual([dw.izin.length, dw.izin[0].alasan, dw.siswa.mukim], [2, 'Acara keluarga', 'mukim']);
+
+  // impor Excel santri dengan kamar & status mukim
+  const xl = buildXlsx('Santri', ['Nama Siswa', 'NISN', 'Jenis Kelamin', 'Kelas', 'Kamar', 'Mukim'], [['Hasan', '5555555555', 'L', 'Wustho', 'Al-Ghazali 3', 'mukim'], ['Husain', '6666666666', 'L', 'Wustho', 'al-ghazali 3', 'laju pulang-pergi']]);
+  const ip = (await yys('siswa-impor', 'POST', { file: xl.toString('base64'), simpan: true }, PON)).data;
+  assert.deepStrictEqual([ip.baru, ip.kamar_baru], [2, ['Al-Ghazali 3']]);
+  const h = (await yys('siswa?q=Hasan', 'GET', null, PON)).data[0];
+  assert.deepStrictEqual([h.kamar_nama, h.mukim, (await yys('siswa?q=Husain', 'GET', null, PON)).data[0].mukim], ['Al-Ghazali 3', 'mukim', 'laju']);
+  const ex = readXlsx((await yys('export/santri', 'GET', null, PON)).data)[0].rows;
+  assert.deepStrictEqual(ex[0].slice(0, 8), ['No', 'NIS', 'NISN', 'Nama', 'L/P', 'Kelas', 'Kamar', 'Gedung']);
+  assert.ok(ex.some((r) => r.includes('SMP VII')));                                                                                                 // asal sekolah tercantum
+});

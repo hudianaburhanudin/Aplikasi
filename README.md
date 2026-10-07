@@ -75,6 +75,14 @@ Akun admin lembaga dan bendahara hanya dapat dibuat oleh Admin Yayasan. Wali mur
 - **Ekspor Excel (.xlsx) dan PDF** (daftar, rapor, kuitansi) sesuai filter aktif
 - Login, ganti password, reset password oleh admin
 
+### Pondok pesantren (santri)
+Lembaga pondok harus berjenjang **Pesantren** (menu Lembaga). Pondok memakai semua fitur sekolah (kelas/halaqah, absensi, nilai, rapor, jadwal, ujian, pembayaran, wali) ditambah **Kamar/Asrama** (kapasitas, pembina), status **mukim/laju**, dan **Izin Santri** (pulang/keluar, terlambat kembali tampil di dashboard dan di aplikasi wali).
+Cara memasukkan santri:
+1. **Dari data sekolah** – menu *Siswa* → pilih kelas → **🕌 Daftarkan ke Pondok** (admin yayasan atau admin sekolah). Dibuatkan catatan santri di pondok; data identitas & akun wali ikut tertaut, data sekolah tidak berubah. Yang sudah jadi santri dilewati.
+2. **Langsung di pondok** – menu *Santri* → **+ Tambah**, atau **Impor Excel** (template punya kolom *Kamar* dan *Mukim*; kamar yang belum ada dibuat otomatis).
+3. **PPDB online** pondok seperti lembaga lain.
+Setelah itu admin pondok mengatur kelas dan kamar (menu *Kamar* → Penghuni) dan mencatat izin.
+
 ## WhatsApp
 Aplikasi menerima pesan lewat webhook `https://DOMAIN/api/wa/webhook` dan membalas lewat penyedia yang dipilih
 (`WA_PROVIDER`, lihat `.env.example`). Penyedia resmi **Meta WhatsApp Cloud API** disarankan (stabil, nomor tidak

@@ -65,6 +65,8 @@ Alamat untuk dibagikan: petugas `https://DOMAIN-ANDA/`, wali murid `https://DOMA
 pendaftaran `https://DOMAIN-ANDA/daftar`, kebijakan privasi `https://DOMAIN-ANDA/privasi`. Ketiganya dapat dipasang di layar utama
 HP ("Tambahkan ke Layar Utama") tanpa toko aplikasi.
 
+**Pondok:** pastikan lembaga pondok berjenjang *Pesantren*, buat kamar (menu Kamar), lalu masukkan santri lewat *Siswa → Daftarkan ke Pondok* atau *Santri → Impor Excel* (lihat README, bagian Pondok pesantren).
+
 ## 5. Memperbarui aplikasi
 ```bash
 cd Aplikasi

@@ -209,6 +209,20 @@ const MIGRATIONS = [
      mapel TEXT NOT NULL, jam INTEGER NOT NULL, guru_id INTEGER REFERENCES guru(id) ON DELETE SET NULL, blok INTEGER NOT NULL DEFAULT 1, UNIQUE (kelas_id, mapel));
    CREATE INDEX idx_beban ON beban_ajar(lembaga_id, kelas_id);
    CREATE TABLE guru_batas (guru_id INTEGER PRIMARY KEY REFERENCES guru(id) ON DELETE CASCADE, libur TEXT NOT NULL DEFAULT '', maks_hari INTEGER);`,
+  // v14: pondok pesantren - santri (siswa sekolah yang mukim), kamar/asrama, izin keluar/pulang
+  `CREATE TABLE kamar (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id), nama TEXT NOT NULL, gedung TEXT, kapasitas INTEGER,
+     pembina_guru_id INTEGER REFERENCES guru(id) ON DELETE SET NULL, UNIQUE (lembaga_id, nama));
+   ALTER TABLE siswa ADD COLUMN kamar_id INTEGER REFERENCES kamar(id) ON DELETE SET NULL;
+   ALTER TABLE siswa ADD COLUMN mukim TEXT;
+   ALTER TABLE siswa ADD COLUMN siswa_sumber_id INTEGER REFERENCES siswa(id) ON DELETE SET NULL;
+   CREATE INDEX idx_siswa_kamar ON siswa(kamar_id);
+   CREATE INDEX idx_siswa_sumber ON siswa(siswa_sumber_id);
+   CREATE TABLE izin_santri (
+     id INTEGER PRIMARY KEY, siswa_id INTEGER NOT NULL REFERENCES siswa(id) ON DELETE CASCADE, jenis TEXT NOT NULL DEFAULT 'pulang',
+     tgl_pergi TEXT NOT NULL, tgl_kembali TEXT NOT NULL, tgl_kembali_nyata TEXT, alasan TEXT, penjemput TEXT, dicatat_oleh TEXT,
+     dibuat TEXT NOT NULL DEFAULT (datetime('now')));
+   CREATE INDEX idx_izin_siswa ON izin_santri(siswa_id, tgl_kembali);`,
 ];
 
 function migrate(db) {

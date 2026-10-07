@@ -63,10 +63,12 @@ const RES = {
   },
   siswa: {
     a: 's', table: 'siswa', own: true,
-    cols: ['nis', 'nisn', 'nis_lokal', 'nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'no_kk', 'agama', 'jurusan', 'kelas_id', 'status', 'mengulang', 'tahun_masuk', 'tahun_lulus', 'wali', 'telepon', 'email', 'alamat', 'rt', 'rw', 'dusun', 'desa', 'kecamatan', 'kabupaten', 'kode_pos', 'jenis_tinggal', 'transportasi', 'nama_ayah', 'nik_ayah', 'lahir_ayah', 'pendidikan_ayah', 'pekerjaan_ayah', 'penghasilan_ayah', 'nama_ibu', 'nik_ibu', 'lahir_ibu', 'pendidikan_ibu', 'pekerjaan_ibu', 'penghasilan_ibu', 'kip_kemenag', 'kip_diknas', 'kps', 'pkh', 'sktm'], req: ['nama'],
-    enums: { jk: ['L', 'P'], status: ['aktif', 'lulus', 'pindah', 'keluar'] },
-    sel: `SELECT s.*, l.kode lembaga_kode, l.nama lembaga_nama, l.nsm lembaga_nsm, k.nama kelas_nama FROM siswa s ${LJ}s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id`,
-    search: ['s.nama', 's.nis', 's.nisn', 's.nis_lokal'], filters: { kelas_id: 's.kelas_id', status: 's.status' }, order: 'l.id, s.nama',
+    cols: ['nis', 'nisn', 'nis_lokal', 'nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'no_kk', 'agama', 'jurusan', 'kelas_id', 'status', 'mengulang', 'tahun_masuk', 'tahun_lulus', 'wali', 'telepon', 'email', 'alamat', 'rt', 'rw', 'dusun', 'desa', 'kecamatan', 'kabupaten', 'kode_pos', 'jenis_tinggal', 'transportasi', 'nama_ayah', 'nik_ayah', 'lahir_ayah', 'pendidikan_ayah', 'pekerjaan_ayah', 'penghasilan_ayah', 'nama_ibu', 'nik_ibu', 'lahir_ibu', 'pendidikan_ibu', 'pekerjaan_ibu', 'penghasilan_ibu', 'kip_kemenag', 'kip_diknas', 'kps', 'pkh', 'sktm', 'kamar_id', 'mukim'], req: ['nama'],
+    enums: { jk: ['L', 'P'], status: ['aktif', 'lulus', 'pindah', 'keluar'], mukim: ['mukim', 'laju'] },
+    sel: `SELECT s.*, l.kode lembaga_kode, l.nama lembaga_nama, l.nsm lembaga_nsm, k.nama kelas_nama, km.nama kamar_nama, km.gedung kamar_gedung, lx.kode asal_lembaga, kx.nama asal_kelas
+          FROM siswa s ${LJ}s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN kamar km ON km.id = s.kamar_id
+          LEFT JOIN siswa sx ON sx.id = s.siswa_sumber_id LEFT JOIN lembaga lx ON lx.id = sx.lembaga_id LEFT JOIN kelas kx ON kx.id = sx.kelas_id`,
+    search: ['s.nama', 's.nis', 's.nisn', 's.nis_lokal'], filters: { kelas_id: 's.kelas_id', status: 's.status', kamar_id: 's.kamar_id', mukim: 's.mukim' }, order: 'l.id, s.nama',
     scopeCol: 's.lembaga_id', scopeKey: 'lembaga_id',
   },
   tagihan: {
@@ -139,6 +141,21 @@ const RES = {
     sel: `SELECT b.*, l.kode lembaga_kode, k.nama kelas_nama, g.nama guru_nama FROM beban_ajar b ${LJ}b.lembaga_id LEFT JOIN kelas k ON k.id = b.kelas_id LEFT JOIN guru g ON g.id = b.guru_id`,
     search: ['b.mapel', 'k.nama', 'g.nama'], filters: { kelas_id: 'b.kelas_id' }, order: 'l.id, k.nama, b.id', scopeCol: 'b.lembaga_id', scopeKey: 'lembaga_id',
   },
+  kamar: {
+    a: 'm', table: 'kamar', cols: ['nama', 'gedung', 'kapasitas', 'pembina_guru_id'], req: ['nama'], own: true,
+    sel: `SELECT m.*, l.kode lembaga_kode, g.nama pembina_nama, (SELECT COUNT(*) FROM siswa s WHERE s.kamar_id = m.id AND s.status = 'aktif') terisi
+          FROM kamar m ${LJ}m.lembaga_id LEFT JOIN guru g ON g.id = m.pembina_guru_id`,
+    search: ['m.nama', 'm.gedung'], filters: {}, order: 'l.id, m.gedung, m.nama', scopeCol: 'm.lembaga_id', scopeKey: 'lembaga_id',
+  },
+  izin_santri: {
+    a: 'z', table: 'izin_santri', cols: ['siswa_id', 'jenis', 'tgl_pergi', 'tgl_kembali', 'tgl_kembali_nyata', 'alasan', 'penjemput'], req: ['siswa_id', 'tgl_pergi', 'tgl_kembali'],
+    enums: { jenis: ['pulang', 'keluar', 'sakit', 'kegiatan'] },
+    sel: `SELECT z.*, s.lembaga_id, l.kode lembaga_kode, s.nama siswa_nama, s.nis, k.nama kelas_nama, km.nama kamar_nama,
+            CASE WHEN z.tgl_kembali_nyata IS NOT NULL THEN 'kembali' WHEN z.tgl_kembali < date('now', '+7 hours') THEN 'terlambat' ELSE 'izin' END status
+          FROM izin_santri z JOIN siswa s ON s.id = z.siswa_id ${LJ}s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN kamar km ON km.id = s.kamar_id`,
+    search: ['s.nama', 'z.alasan', 'z.penjemput'], filters: { siswa_id: 'z.siswa_id', kelas_id: 's.kelas_id', status: `(CASE WHEN z.tgl_kembali_nyata IS NOT NULL THEN 'kembali' WHEN z.tgl_kembali < date('now', '+7 hours') THEN 'terlambat' ELSE 'izin' END)` },
+    order: 'z.tgl_kembali_nyata IS NOT NULL, z.tgl_kembali, z.id DESC', scopeCol: 's.lembaga_id', scopeKey: 'lembaga_id',
+  },
   pembayaran: {
     a: 'p', table: 'pembayaran', cols: ['siswa_id', 'jenis', 'bulan', 'jumlah', 'tanggal', 'keterangan'], req: ['siswa_id', 'jumlah', 'tanggal'],
     sel: `SELECT p.*, s.lembaga_id, l.kode lembaga_kode, l.nama lembaga_nama, s.nama siswa_nama, s.nis, k.nama kelas_nama FROM pembayaran p
@@ -168,6 +185,7 @@ const EXPORTS = {
     ['Jenis Kelamin', 'jk'], ['Kelas', 'kelas_nama'], ['Jurusan', 'jurusan'], ['KIP KEMENAG', 'kip_kemenag'], ['KIP DIKNAS', 'kip_diknas'], ['KPS', 'kps'], ['PKH', 'pkh'], ['SKTM', 'sktm'], ['Nama Ayah', 'nama_ayah'], ['NIK Ayah', 'nik_ayah'], ['Nama Ibu', 'nama_ibu'], ['NIK Ibu', 'nik_ibu'],
     ['Alamat Siswa', 'alamat_lengkap'], ['Desa', 'desa'], ['Kecamatan', 'kecamatan'], ['Kabupaten', 'kabupaten'], ['NSM', 'lembaga_nsm'], ['Nama Madrasah', 'lembaga_nama'], ['STATUS', 'status_ulang']]],
   // Format rekapitulasi data siswa untuk Satuan Pelayanan Pemenuhan Gizi (MBG/SPPG)
+  santri: ['Data Santri', [['No', 'no'], ['NIS', 'nis'], ['NISN', 'nisn'], ['Nama', 'nama'], ['L/P', 'jk'], ['Kelas', 'kelas_nama'], ['Kamar', 'kamar_nama'], ['Gedung', 'kamar_gedung'], ['Status', 'mukim_teks'], ['Asal sekolah', 'asal_sekolah'], ['Wali', 'wali'], ['Telepon', 'telepon'], ['Alamat', 'alamat_lengkap']]],
   sppg: ['Rekapitulasi Data Siswa (SPPG)', [['NO', 'no'], ['NISN', 'nisn'], ['NAMA SISWA', 'nama'], ['UMUR', 'umur'], ['JENIS KELAMIN', 'jk'], ['KELAS', 'kelas_nama'], ['NAMA ORANG TUA / WALI', 'ortu']]],
   'rekap-absensi': ['Rekap Absensi', [['NIS', 'nis'], ['Nama', 'nama'], ['Hadir', 'h'], ['Sakit', 's'], ['Izin', 'i'], ['Alpa', 'a']]],
 };
@@ -178,10 +196,11 @@ function templateSiswa() {
     ['NIK Siswa', 'diisi 16 digit', '3522027010170001'], ['Nomor KK', 'diisi 16 digit', '3522022607110002'], ['Jenis Kelamin', 'diisi L / P', 'P'], ['Kelas', 'diisi kelas (1, 2, 7A, ...)', '1'],
     ['KIP KEMENAG', 'diisi nomor kartu bila ada', ''], ['KIP DIKNAS', '', ''], ['KPS', '', ''], ['PKH', '', ''], ['SKTM', '', ''],
     ['Nama Ayah', 'diisi nama ayah', 'Imam Nur Cholik'], ['NIK Ayah', 'diisi 16 digit', '3522022101830001'], ['Nama Ibu', 'diisi nama ibu', 'Yuliana Wati'], ['NIK Ibu', 'diisi 16 digit', '3522025011860004'],
-    ['Alamat Siswa', 'diisi alamat', 'Tambakrejo RT/RW 02/01'], ['Desa', '', 'Tambakrejo'], ['Kecamatan', '', 'Tambakrejo'], ['Kabupaten', '', 'Bojonegoro'], ['No HP', 'diisi nomor HP/WA orang tua', '081234567890'], ['STATUS', 'diisi TIDAK MENGULANG / MENGULANG', 'TIDAK MENGULANG']];
+    ['Alamat Siswa', 'diisi alamat', 'Tambakrejo RT/RW 02/01'], ['Desa', '', 'Tambakrejo'], ['Kecamatan', '', 'Tambakrejo'], ['Kabupaten', '', 'Bojonegoro'], ['No HP', 'diisi nomor HP/WA orang tua', '081234567890'], ['STATUS', 'diisi TIDAK MENGULANG / MENGULANG', 'TIDAK MENGULANG'],
+    ['Kamar', 'khusus pondok: nama kamar (dibuat otomatis bila belum ada)', 'Al-Ghazali 1'], ['Mukim', 'khusus pondok: mukim / laju', 'mukim']];
   return buildXlsx('Data Siswa', kol.map((k) => k[0]), [kol.map((k, i) => (i === 0 ? 'diisi urut' : k[1])), kol.map((k, i) => (i === 0 ? 'contoh: 1' : k[2]))]);
 }
-const EXPORT_SRC = { 'siswa-lengkap': 'siswa', 'by-name': 'siswa', sppg: 'siswa' };
+const EXPORT_SRC = { 'siswa-lengkap': 'siswa', 'by-name': 'siswa', sppg: 'siswa', santri: 'siswa' };
 function umurTeks(tgl, today) {
   if (!tgl) return '';
   const [y, m, d] = tgl.split('-').map(Number), [ty, tm, td] = today.split('-').map(Number);
@@ -195,8 +214,10 @@ function hitungTurunan(r, i, today) {
   r.ortu = r.wali || [r.nama_ayah, r.nama_ibu].filter(Boolean).join(' / ');
   r.alamat_lengkap = [r.alamat, r.dusun && 'Dusun ' + r.dusun, (r.rt || r.rw) && `RT/RW ${r.rt || '-'}/${r.rw || '-'}`].filter(Boolean).join(', ');
   r.status_ulang = r.mengulang ? 'MENGULANG' : 'TIDAK MENGULANG';
+  r.mukim_teks = r.mukim === 'laju' ? 'Laju (pulang-pergi)' : r.mukim === 'mukim' ? 'Mukim' : '';
+  r.asal_sekolah = [r.asal_lembaga, r.asal_kelas].filter(Boolean).join(' ');
 }
-const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin', 'hari', 'urut', 'kkm', 'mengulang', 'durasi', 'acak', 'tampil_nilai', 'jam', 'blok']);
+const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin', 'hari', 'urut', 'kkm', 'mengulang', 'durasi', 'acak', 'tampil_nilai', 'jam', 'blok', 'kapasitas']);
 const KENAIKAN = ['naik', 'lulus', 'pindah', 'keluar'];
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
@@ -304,7 +325,7 @@ function createApp(dbFile, opts = {}) {
   const publicUser = (u) => {
     const ids = userLembagaIds(u);
     return { id: u.id, username: u.username, nama: u.nama, role: u.role, wa: u.wa || null, must_change: !!u.must_change,
-      lembagas: ids.length ? db.prepare(`SELECT id, kode, nama FROM lembaga WHERE id IN (${ph(ids)}) ORDER BY id`).all(...ids) : [] };
+      lembagas: ids.length ? db.prepare(`SELECT id, kode, nama, jenjang FROM lembaga WHERE id IN (${ph(ids)}) ORDER BY id`).all(...ids) : [] };
   };
   // Lembaga yang sedang aktif dipilih lewat header X-Lembaga ("all" = semua yang diizinkan)
   function scopeOf(user, req) {
@@ -352,13 +373,15 @@ function createApp(dbFile, opts = {}) {
   function checkRefs(cfg, d, lembagaId, ctx) {
     if (cfg.table === 'siswa' && d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
     if (cfg.table === 'kelas' && d.wali_guru_id != null && lembagaOf('guru', d.wali_guru_id, ctx) !== lembagaId) throw new HttpError(400, 'Wali kelas berasal dari lembaga lain');
+    if (cfg.table === 'siswa' && d.kamar_id != null && lembagaOf('kamar', d.kamar_id, ctx) !== lembagaId) throw new HttpError(400, 'Kamar berasal dari lembaga lain');
+    if (cfg.table === 'kamar' && d.pembina_guru_id != null && lembagaOf('guru', d.pembina_guru_id, ctx) !== lembagaId) throw new HttpError(400, 'Pembina berasal dari lembaga lain');
     if (cfg.table === 'beban_ajar') {
       if (d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
       if (d.guru_id != null && lembagaOf('guru', d.guru_id, ctx) !== lembagaId) throw new HttpError(400, 'Guru berasal dari lembaga lain');
     }
     if ((cfg.table === 'ujian' || cfg.table === 'materi') && d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
     if (cfg.table === 'jadwal' && d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
-    if ((cfg.table === 'nilai' || cfg.table === 'pembayaran') && d.siswa_id != null) {
+    if ((cfg.table === 'nilai' || cfg.table === 'pembayaran' || cfg.table === 'izin_santri') && d.siswa_id != null) {
       const sl = lembagaOf('siswa', d.siswa_id, ctx);
       if (lembagaId != null && sl !== lembagaId) throw new HttpError(400, 'Siswa berasal dari lembaga lain');
     }
@@ -683,9 +706,9 @@ function createApp(dbFile, opts = {}) {
 
   // ---- API untuk wali murid (hanya baca, hanya anak yang tertaut) ----
   function waliApi(parts, ctx, method = 'GET', body = {}, q = {}) {
-    const anak = () => db.prepare(`SELECT s.id, s.nis, s.nama, s.jk, s.status, s.lembaga_id, s.kelas_id, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama, g.nama wali_kelas
+    const anak = () => db.prepare(`SELECT s.id, s.nis, s.nama, s.jk, s.status, s.lembaga_id, s.kelas_id, s.mukim, km.nama kamar_nama, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama, g.nama wali_kelas
       FROM wali_siswa w JOIN siswa s ON s.id = w.siswa_id JOIN lembaga l ON l.id = s.lembaga_id
-      LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN guru g ON g.id = k.wali_guru_id
+      LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN guru g ON g.id = k.wali_guru_id LEFT JOIN kamar km ON km.id = s.kamar_id
       WHERE w.user_id = ? ORDER BY s.nama`).all(ctx.user.id);
     const what = parts[1];
     if (what === 'anak' && !parts[2]) return anak();
@@ -698,6 +721,7 @@ function createApp(dbFile, opts = {}) {
         FROM absensi WHERE siswa_id = ? ${where}`).get(id, ...a);
       return {
         siswa,
+        izin: db.prepare('SELECT jenis, tgl_pergi, tgl_kembali, tgl_kembali_nyata, alasan FROM izin_santri WHERE siswa_id = ? ORDER BY id DESC LIMIT 20').all(id),
         jadwal: siswa.kelas_id ? jadwalRows(siswa.lembaga_id, siswa.kelas_id).map(({ hari, mulai, selesai, judul, guru }) => ({ hari, mulai, selesai, judul, guru })) : [],
         absensi: { bulan, bulan_ini: rek("AND substr(tanggal, 1, 7) = ?", bulan), semua: rek(''),
           terbaru: db.prepare('SELECT tanggal, status FROM absensi WHERE siswa_id = ? ORDER BY tanggal DESC LIMIT 14').all(id) },
@@ -778,6 +802,8 @@ function createApp(dbFile, opts = {}) {
       if (cfg.table === 'ujian') { ujianSvc.cekUjian(d, null); d.dibuat_oleh = ctx.user.nama; }
       if (cfg.table === 'materi') { cekMateri(d); d.dibuat_oleh = ctx.user.nama; }
       if (cfg.table === 'beban_ajar') cekBeban(d, null);
+      if (cfg.table === 'izin_santri') { cekIzin(d, null); d.dicatat_oleh = ctx.user.nama; }
+      if (cfg.table === 'kamar') cekKamar(d);
       checkRefs(cfg, d, lid, ctx);
       if (cfg.table === 'pendaftar') fillPendaftar(d, lid, 'admin');
       if (cfg.table === 'pengumuman') Object.assign(d, { dibuat_oleh: ctx.user.nama, tanggal: todayWib() });
@@ -799,6 +825,8 @@ function createApp(dbFile, opts = {}) {
       if (cfg.table === 'ujian') ujianSvc.cekUjian(d, row);
       if (cfg.table === 'materi') cekMateri(d);
       if (cfg.table === 'beban_ajar') cekBeban(d, row);
+      if (cfg.table === 'izin_santri') cekIzin(d, row);
+      if (cfg.table === 'kamar') cekKamar(d);
       checkRefs(cfg, d, cfg.scopeKey ? row[cfg.scopeKey] : null, ctx);
       if (cfg.table === 'pelanggaran' && 'jenis_id' in d) fillPelanggaran({ ...d, siswa_id: row.siswa_id }, ctx, d);
       if (cfg.table === 'jenis_pelanggaran' && 'kode' in d) cekKodeJenis(d);
@@ -879,6 +907,16 @@ function createApp(dbFile, opts = {}) {
         per_kelas: db.prepare(`SELECT k.nama, l.kode lembaga_kode, COUNT(s.id) jumlah FROM kelas k JOIN lembaga l ON l.id = k.lembaga_id
           LEFT JOIN siswa s ON s.kelas_id = k.id AND s.status = 'aktif' WHERE k.lembaga_id IN (${p}) GROUP BY k.id ORDER BY l.id, k.nama`).all(...ids),
       });
+    }
+    if (!isBendahara(role)) {
+      const pid = db.prepare(`SELECT id FROM lembaga WHERE jenjang = 'Pesantren' AND id IN (${p})`).all(...ids).map((r) => r.id);
+      if (pid.length) {
+        const q = ph(pid), c = (sql) => db.prepare(sql).get(...pid).n;
+        out.pesantren = { santri: c(`SELECT COUNT(*) n FROM siswa WHERE status = 'aktif' AND lembaga_id IN (${q})`), mukim: c(`SELECT COUNT(*) n FROM siswa WHERE status = 'aktif' AND mukim = 'mukim' AND lembaga_id IN (${q})`),
+          laju: c(`SELECT COUNT(*) n FROM siswa WHERE status = 'aktif' AND mukim = 'laju' AND lembaga_id IN (${q})`), tanpa_kamar: c(`SELECT COUNT(*) n FROM siswa WHERE status = 'aktif' AND mukim = 'mukim' AND kamar_id IS NULL AND lembaga_id IN (${q})`),
+          izin_keluar: db.prepare(`SELECT COUNT(*) n FROM izin_santri z JOIN siswa s ON s.id = z.siswa_id WHERE z.tgl_kembali_nyata IS NULL AND s.lembaga_id IN (${q})`).get(...pid).n,
+          izin_terlambat: db.prepare(`SELECT s.nama, z.tgl_kembali FROM izin_santri z JOIN siswa s ON s.id = z.siswa_id WHERE z.tgl_kembali_nyata IS NULL AND z.tgl_kembali < ? AND s.lembaga_id IN (${q}) ORDER BY z.tgl_kembali LIMIT 15`).all(today, ...pid) };
+      }
     }
     if (KEUANGAN.has(role)) {                         // bagian keuangan: admin yayasan dan bendahara
       const awal = new Date(Date.UTC(Number(bulan.slice(0, 4)), Number(bulan.slice(5)) - 6, 1)).toISOString().slice(0, 7);
@@ -1133,6 +1171,71 @@ function createApp(dbFile, opts = {}) {
     return cariBentrok(rows);
   }
 
+  // ---- pondok pesantren: santri, kamar, izin ----
+  function cekIzin(d, row) {
+    for (const k of ['tgl_pergi', 'tgl_kembali', 'tgl_kembali_nyata']) if (k in d && d[k] !== null && !isDate(d[k])) throw new HttpError(400, 'Tanggal harus berformat TTTT-BB-HH');
+    const pergi = d.tgl_pergi ?? (row && row.tgl_pergi), kembali = d.tgl_kembali ?? (row && row.tgl_kembali), nyata = 'tgl_kembali_nyata' in d ? d.tgl_kembali_nyata : (row && row.tgl_kembali_nyata);
+    if (pergi && kembali && kembali < pergi) throw new HttpError(400, 'Tanggal kembali tidak boleh sebelum tanggal pergi');
+    if (pergi && nyata && nyata < pergi) throw new HttpError(400, 'Tanggal kembali nyata tidak boleh sebelum tanggal pergi');
+    if ('alasan' in d && d.alasan) d.alasan = d.alasan.slice(0, 300);
+    if ('penjemput' in d && d.penjemput) d.penjemput = d.penjemput.slice(0, 100);
+  }
+  function cekKamar(d) {
+    if ('kapasitas' in d && d.kapasitas !== null && !(Number.isInteger(d.kapasitas) && d.kapasitas >= 1 && d.kapasitas <= 300)) throw new HttpError(400, 'Kapasitas kamar 1-300');
+    if ('nama' in d && d.nama) d.nama = d.nama.slice(0, 60);
+  }
+  function kamarTempat(body, ctx) {
+    const ids = [...new Set((Array.isArray(body.siswa_ids) ? body.siswa_ids : []).map(Number))];
+    if (!ids.length || ids.length > 500) throw new HttpError(400, 'Pilih santri (maksimal 500)');
+    let lid = null, kamar = null;
+    if (body.kamar_id) { lid = lembagaOf('kamar', Number(body.kamar_id), ctx); kamar = db.prepare('SELECT * FROM kamar WHERE id = ?').get(Number(body.kamar_id)); }
+    for (const sid of ids) { const l = lembagaOf('siswa', sid, ctx); if (lid !== null && l !== lid) throw new HttpError(400, 'Santri berasal dari lembaga lain'); }
+    if (kamar && kamar.kapasitas) {
+      const sudah = db.prepare("SELECT COUNT(*) n FROM siswa WHERE kamar_id = ? AND status = 'aktif' AND id NOT IN (" + ph(ids) + ')').get(kamar.id, ...ids).n;
+      if (sudah + ids.length > kamar.kapasitas) throw new HttpError(409, `Kamar ${kamar.nama} penuh: terisi ${sudah} dari ${kamar.kapasitas}, tidak muat ${ids.length} santri lagi`);
+    }
+    db.exec('BEGIN');
+    try { for (const sid of ids) db.prepare('UPDATE siswa SET kamar_id = ? WHERE id = ?').run(kamar ? kamar.id : null, sid); catat(ctx.user, 'tempat_kamar', `${ids.length} santri -> ${kamar ? kamar.nama : 'tanpa kamar'}`); db.exec('COMMIT'); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { ok: true, jumlah: ids.length };
+  }
+  const pondokList = () => db.prepare("SELECT id, kode, nama FROM lembaga WHERE jenjang = 'Pesantren' ORDER BY id").all();
+  const SALIN_SANTRI = ['nisn', 'nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'no_kk', 'agama', 'alamat', 'rt', 'rw', 'dusun', 'desa', 'kecamatan', 'kabupaten', 'kode_pos', 'email', 'nama_ayah', 'nik_ayah', 'lahir_ayah', 'pendidikan_ayah', 'pekerjaan_ayah', 'penghasilan_ayah',
+    'nama_ibu', 'nik_ibu', 'lahir_ibu', 'pendidikan_ibu', 'pekerjaan_ibu', 'penghasilan_ibu', 'wali', 'telepon', 'jenis_tinggal', 'transportasi', 'kip_kemenag', 'kip_diknas', 'kps', 'pkh', 'sktm'];
+  // Mendaftarkan siswa sekolah sebagai santri: dibuatkan catatan santri di lembaga pondok (data identitas disalin, wali ikut tertaut)
+  function santriDaftar(body, ctx) {
+    const pondok = pondokList();
+    const tujuan = body.pondok_id ? pondok.find((p) => p.id === Number(body.pondok_id)) : (pondok.length === 1 ? pondok[0] : null);
+    if (!tujuan) throw new HttpError(400, pondok.length ? 'Pilih pondok tujuan' : 'Belum ada lembaga berjenjang "Pesantren". Atur jenjang lembaga pondok di menu Lembaga.');
+    const ids = [...new Set((Array.isArray(body.siswa_ids) ? body.siswa_ids : []).map(Number))];
+    if (!ids.length || ids.length > 500) throw new HttpError(400, 'Pilih siswa (maksimal 500)');
+    const mukim = body.mukim === 'laju' ? 'laju' : 'mukim', tahun = activeTahun() || null, aksesPondok = ctx.scope.ids.includes(tujuan.id);
+    let kelasId = null, kamarId = null;
+    if (aksesPondok && body.kelas_id) { if (lembagaOf('kelas', Number(body.kelas_id), ctx) !== tujuan.id) throw new HttpError(400, 'Kelas bukan milik pondok tujuan'); kelasId = Number(body.kelas_id); }
+    if (aksesPondok && body.kamar_id) { if (lembagaOf('kamar', Number(body.kamar_id), ctx) !== tujuan.id) throw new HttpError(400, 'Kamar bukan milik pondok tujuan'); kamarId = Number(body.kamar_id); }
+    const dibuat = [], dilewati = [], boleh = new Set(ctx.user.lembagas.map((l) => l.id));   // sumber: lembaga mana pun yang boleh diakses pengguna
+    db.exec('BEGIN');
+    try {
+      for (const sid of ids) {
+        const src = db.prepare('SELECT * FROM siswa WHERE id = ?').get(sid);
+        if (!src || !boleh.has(src.lembaga_id)) throw new HttpError(404, 'Siswa tidak ditemukan');
+        if (src.lembaga_id === tujuan.id) { dilewati.push({ nama: src.nama, alasan: 'sudah di lembaga pondok' }); continue; }
+        if (src.status !== 'aktif') { dilewati.push({ nama: src.nama, alasan: 'bukan siswa aktif' }); continue; }
+        const ada = db.prepare('SELECT id FROM siswa WHERE lembaga_id = ? AND (siswa_sumber_id = ? OR (nisn IS NOT NULL AND nisn = ?) OR (nik IS NOT NULL AND nik = ?))').get(tujuan.id, src.id, src.nisn, src.nik);
+        if (ada) { dilewati.push({ nama: src.nama, alasan: 'sudah tercatat sebagai santri' }); continue; }
+        const cols = SALIN_SANTRI.filter((c) => src[c] != null), vals = cols.map((c) => src[c]);
+        const baru = Number(db.prepare(`INSERT INTO siswa (lembaga_id, status, tahun_masuk, mukim, siswa_sumber_id, kelas_id, kamar_id${cols.map((c) => ', ' + c).join('')}) VALUES (?,?,?,?,?,?,?${cols.map(() => ',?').join('')})`)
+          .run(tujuan.id, 'aktif', tahun, mukim, src.id, kelasId, kamarId, ...vals).lastInsertRowid);
+        db.prepare("INSERT INTO mutasi (siswa_id, jenis, ke_kelas_id, tahun_ajaran, tanggal, keterangan) VALUES (?, 'masuk', ?, ?, ?, ?)").run(baru, kelasId, tahun, todayWib(), 'masuk pondok dari sekolah');
+        db.prepare('INSERT OR IGNORE INTO wali_siswa (user_id, siswa_id) SELECT user_id, ? FROM wali_siswa WHERE siswa_id = ?').run(baru, src.id);
+        dibuat.push({ siswa_id: baru, nama: src.nama });
+      }
+      catat(ctx.user, 'daftar_santri', `${dibuat.length} santri -> ${tujuan.nama}${dilewati.length ? `, ${dilewati.length} dilewati` : ''}`);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { pondok: tujuan, dibuat: dibuat.length, dilewati, kelas_diatur: !!kelasId, kamar_diatur: !!kamarId, catatan: aksesPondok ? null : 'Kelas dan kamar diatur oleh admin pondok.' };
+  }
+
   // ---- jadwal pelajaran ----
   function cekJadwal(d, row) {
     for (const k of ['mulai', 'selesai']) {
@@ -1266,7 +1369,7 @@ function createApp(dbFile, opts = {}) {
   }
 
   // ---- impor siswa dari Excel (By Name By Address EMIS, Dapodik, MBG) ----
-  const IMPOR_KOLOM = RES.siswa.cols.filter((c) => !['kelas_id', 'status', 'tahun_lulus'].includes(c));
+  const IMPOR_KOLOM = RES.siswa.cols.filter((c) => !['kelas_id', 'status', 'tahun_lulus', 'kamar_id'].includes(c));
   function imporSiswa(body, ctx) {
     const lid = ctx.scope.target;
     if (!lid) throw new HttpError(400, 'Pilih lembaga terlebih dahulu');
@@ -1309,7 +1412,10 @@ function createApp(dbFile, opts = {}) {
         .filter((x) => !r.tgl_lahir || !x.tgl_lahir || x.tgl_lahir === r.tgl_lahir);
       return sama.length === 1 ? sama[0].id : null;     // hanya bila tidak ambigu
     };
-    const ringkas = { sheet: pilih.name, sheets: info, baris_judul: hasil.header, kolom_terbaca: hasil.fields, kolom_diabaikan: hasil.unmapped, peringatan: hasil.warnings,
+    const adalahPondok = db.prepare("SELECT 1 FROM lembaga WHERE id = ? AND jenjang = 'Pesantren'").get(lid);
+    const kamarDb = new Map(db.prepare('SELECT id, nama FROM kamar WHERE lembaga_id = ?').all(lid).map((k) => [k.nama.toLowerCase(), k.id]));
+    const kamarBaru = new Set(); { const lihat = new Set(); if (adalahPondok) for (const r of hasil.records) { if (!r.kamar) continue; const k = r.kamar.toLowerCase(); if (kamarDb.has(k) || lihat.has(k)) continue; lihat.add(k); kamarBaru.add(r.kamar); } }
+    const ringkas = { sheet: pilih.name, kamar_baru: [...kamarBaru], sheets: info, baris_judul: hasil.header, kolom_terbaca: hasil.fields, kolom_diabaikan: hasil.unmapped, peringatan: hasil.warnings,
       kelas_baru: [...kelasBaru], contoh: hasil.records.slice(0, 5).map(({ _baris, ...r }) => r) };
     let baru = 0, ubah = 0, sama = 0;
     const rencana = hasil.records.map((r) => ({ r, id: cari(r) }));
@@ -1325,11 +1431,13 @@ function createApp(dbFile, opts = {}) {
     const ta = activeTahun(), tm = str(body.tahun_masuk, 20);
     db.exec('BEGIN');
     try {
+      for (const kn of kamarBaru) kamarDb.set(kn.toLowerCase(), Number(db.prepare('INSERT INTO kamar (lembaga_id, nama) VALUES (?,?)').run(lid, kn.slice(0, 60)).lastInsertRowid));
       for (const kn of kelasBaru) kelasDb.set(kn.toLowerCase(), Number(db.prepare('INSERT INTO kelas (lembaga_id, nama, tahun_ajaran) VALUES (?,?,?)').run(lid, kn, ta).lastInsertRowid));
       for (const { r, id } of rencana) {
         const d = {};
         for (const c of IMPOR_KOLOM) if (r[c] != null) d[c] = r[c];
         if (r.kelas) d.kelas_id = kelasDb.get(r.kelas.toLowerCase());
+        if (adalahPondok && r.kamar) d.kamar_id = kamarDb.get(r.kamar.toLowerCase());
         if (id) {
           const ks = Object.keys(d);
           if (ks.length) db.prepare(`UPDATE siswa SET ${ks.map((k) => k + ' = ?').join(',')} WHERE id = ?`).run(...ks.map((k) => d[k]), id);
@@ -1727,6 +1835,9 @@ function createApp(dbFile, opts = {}) {
     if (name === 'guru-batas') return send(res, 200, guruBatas(method === 'PUT' ? 'PUT' : 'GET', method === 'PUT' ? await readBody(req) : {}, ctx));
     if (name === 'beban-salin' && method === 'POST') return send(res, 200, bebanSalin(await readBody(req), ctx));
     if (name === 'jadwal-bentrok') return send(res, 200, bentrokJadwal(ctx));
+    if (name === 'kamar-tempat' && method === 'POST') return send(res, 200, kamarTempat(await readBody(req), ctx));
+    if (name === 'santri-daftar' && method === 'POST') return send(res, 200, santriDaftar(await readBody(req), ctx));
+    if (name === 'santri-tujuan') return send(res, 200, pondokList());
     if (name === 'jadwal-kelas') return send(res, 200, jadwalKelas(q, ctx));
     if (name === 'jadwal-impor' && method === 'POST') {
       if (ctx.user.role === 'guru') throw new HttpError(403, 'Akses ditolak');

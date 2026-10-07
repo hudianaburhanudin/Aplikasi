@@ -334,6 +334,7 @@ pages.siswa = crudPage({
       `<tr><td>${esc(m.tanggal)}</td><td>${esc(m.jenis)}</td><td>${esc(m.dari_kelas)}</td><td>${esc(m.ke_kelas)}</td><td>${esc(m.tahun_ajaran)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Belum ada riwayat.</p>');
   }) }],
   extra: [
+    { label: '🕌 Daftarkan ke Pondok', hide: () => !pondokAda(), run: (load) => daftarkanKePondok(load, kelasFilter()) },
     { label: 'Impor Excel', run: (load) => imporSiswa(load) },
     { label: '⬇ Template', run: () => download('template/siswa') },
     { label: '⬇ By Name (EMIS)', run: () => download('export/by-name?' + siswaFilter()) },
@@ -561,6 +562,7 @@ pages.dashboard = guard(async () => {
       return `<div><span>${esc(r.tanggal.slice(5))}</span><i style="width:${pct}%"></i><span>${pct}%</span></div>`; }).join('')}</div>` : '<p class="empty">Belum ada data absensi.</p>'}</div>
       <div class="card"><b>Perlu perhatian</b><p class="empty" style="text-align:left;padding:2px 0 8px">Poin pelanggaran ≥ 50 atau alpa ≥ 3 kali dalam 30 hari terakhir.</p>
       ${d.berisiko.length ? `<div class="tablewrap"><table><thead><tr><th>Siswa</th><th>Kelas</th><th>Poin</th><th>Alpa</th></tr></thead><tbody>${d.berisiko.map((r) => `<tr><td>${esc(r.nama)}</td><td>${esc((d.multi ? r.lembaga_kode + ' ' : '') + (r.kelas_nama || ''))}</td><td>${r.poin}</td><td>${r.alpa}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Tidak ada.</p>'}</div></div>` : ''}
+    ${d.pesantren ? `<div class="card" style="margin-top:12px"><b>🕌 Pondok</b><p>Santri ${d.pesantren.santri} · Mukim ${d.pesantren.mukim} · Laju ${d.pesantren.laju} · Belum berkamar ${d.pesantren.tanpa_kamar} · Sedang izin ${d.pesantren.izin_keluar}</p>${d.pesantren.izin_terlambat.length ? `<p style="color:var(--bad)"><b>Terlambat kembali:</b> ${d.pesantren.izin_terlambat.map((x) => esc(x.nama) + ' (' + esc(x.tgl_kembali) + ')').join(', ')}</p>` : ''}</div>` : ''}
     ${keu ? `<div class="grid2" style="margin-top:12px"><div class="card"><b>Pembayaran 6 bulan terakhir</b><div class="bars">${bars(d.pembayaran_per_bulan, (r) => r.bulan, rp)}</div></div>
       <div class="card"><b>Tunggakan per lembaga</b>${d.tunggakan_per_lembaga.length ? `<div class="bars">${bars(d.tunggakan_per_lembaga, (r) => r.kode, rp)}</div>` : '<p class="empty">Tidak ada tunggakan.</p>'}</div>
       ${d.multi ? `<div class="card"><b>Pembayaran bulan ini per lembaga</b><div class="bars">${bars(d.pembayaran_per_lembaga, (r) => r.kode, rp)}</div></div>` : ''}</div>` : ''}`;
@@ -1172,12 +1174,123 @@ pages.audit = guard(async () => {
       `<tr><td class="nw">${esc(r.waktu)}</td><td>${esc(r.aktor)}</td><td class="nw"><span class="badge">${esc(r.aksi)}</span></td><td>${esc(r.detail)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada catatan.</div>'}</div>`;
 });
 
+// ---- pondok pesantren ----
+const pondokAda = () => me.lembagas.some((l) => l.jenjang === 'Pesantren');
+const pondokScope = () => me.lembagas.find((x) => x.id === scope && x.jenjang === 'Pesantren') || me.lembagas.find((x) => x.jenjang === 'Pesantren');
+const MUKIM = [{ value: 'mukim', label: 'Mukim (menetap)' }, { value: 'laju', label: 'Laju (pulang-pergi)' }];
+const optKamar = async () => (await api('kamar')).map((k) => ({ value: k.id, label: `${k.nama}${k.gedung ? ' · ' + k.gedung : ''} (${k.terisi}${k.kapasitas ? '/' + k.kapasitas : ''})` }));
+// pastikan lembaga aktif adalah pondok sebelum membuka halaman santri
+const diPondok = (fn) => guard(async () => {
+  const p = pondokScope();
+  if (!p) { $('#main').innerHTML = '<div class="empty">Belum ada lembaga berjenjang "Pesantren". Atur jenjang lembaga pondok di menu Lembaga.</div>'; return; }
+  if (scope !== p.id) { scope = p.id; try { localStorage.setItem('lembaga', String(scope)); } catch {} const sw = $('#lembaga'); if (sw) sw.value = String(scope); updateBrand(); }
+  return fn()();
+});
+// Daftarkan siswa sekolah menjadi santri
+function daftarkanKePondok(load, kelasId) {
+  const dlg = $('#dlg'), f = $('#dlgForm');
+  dlg.classList.add('wide');
+  (async () => {
+    const tujuan = await api('santri-tujuan');
+    if (!tujuan.length) return toast('Belum ada lembaga berjenjang "Pesantren"', true);
+    const kelas = await optKelas();
+    f.innerHTML = `<h3>🕌 Daftarkan siswa ke Pondok (jadi santri)</h3>
+      <p class="small muted">Dibuatkan catatan santri baru di pondok dengan data identitas dan wali yang sama. Data di sekolah tidak berubah. Siswa yang sudah menjadi santri otomatis dilewati.</p>
+      <div class="grid2"><label>Pondok tujuan <select id="pT">${tujuan.map((p) => `<option value="${p.id}">${esc(p.nama)}</option>`).join('')}</select></label>
+      <label>Status <select id="pM">${MUKIM.map((m) => `<option value="${m.value}">${m.label}</option>`).join('')}</select></label>
+      <label>Pilih kelas sekolah <select id="pK"><option value="">— pilih kelas —</option>${kelas.map((k) => `<option value="${k.value}" ${String(k.value) === String(kelasId) ? 'selected' : ''}>${esc(k.label)}</option>`).join('')}</select></label></div>
+      <div class="tablewrap" id="pL" style="max-height:260px;overflow:auto"><div class="empty">Pilih kelas untuk menampilkan siswa.</div></div>
+      <p class="error" id="formErr"></p>
+      <div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button><button type="button" class="btn primary" id="pGo">Daftarkan terpilih</button></div>`;
+    f.onsubmit = (e) => e.preventDefault();
+    $('#cancelBtn').onclick = () => dlg.close();
+    const tampil = guard(async () => {
+      if (!$('#pK').value) return;
+      const rows = await api('siswa?' + qs({ kelas_id: $('#pK').value, status: 'aktif' }));
+      $('#pL').innerHTML = rows.length ? `<table><thead><tr><th><input type="checkbox" id="pAll"></th><th>NIS</th><th>Nama</th><th>L/P</th></tr></thead><tbody>${rows.map((r) =>
+        `<tr><td><input type="checkbox" class="pc" value="${r.id}"></td><td>${esc(r.nis)}</td><td>${esc(r.nama)}</td><td>${esc(r.jk)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Kelas ini belum punya siswa aktif.</div>';
+      const all = $('#pAll'); if (all) all.onchange = () => document.querySelectorAll('.pc').forEach((c) => { c.checked = all.checked; });
+    });
+    $('#pK').onchange = tampil; tampil();
+    $('#pGo').onclick = guard(async () => {
+      const ids = [...document.querySelectorAll('.pc:checked')].map((c) => Number(c.value));
+      if (!ids.length) { $('#formErr').textContent = 'Centang siswa yang akan didaftarkan'; return; }
+      const r = await api('santri-daftar', { method: 'POST', body: { siswa_ids: ids, pondok_id: Number($('#pT').value), mukim: $('#pM').value } });
+      dlg.close();
+      toast(`${r.dibuat} santri didaftarkan${r.dilewati.length ? `, ${r.dilewati.length} dilewati (${r.dilewati.slice(0, 3).map((x) => x.nama + ': ' + x.alasan).join('; ')})` : ''}`);
+      if (load) load();
+    });
+    dlg.showModal();
+  })().catch((e) => toast(e.message, true));
+}
+pages.santri = diPondok(() => crudPage({
+  key: 'siswa', title: 'Data Santri', single: 'Santri', scoped: false,
+  filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }, { key: 'kamar_id', label: 'Semua kamar', load: optKamar },
+    { key: 'mukim', label: 'Mukim & laju', load: async () => MUKIM },
+    { key: 'status', label: 'Semua status', def: 'aktif', load: async () => STATUS_SISWA.map((v) => ({ value: v, label: v })) }],
+  columns: [{ key: 'nis', label: 'NIS' }, { key: 'nama', label: 'Nama' }, { key: 'jk', label: 'L/P' }, { key: 'kelas_nama', label: 'Kelas' },
+    { key: 'kamar_nama', label: 'Kamar' }, { label: 'Status', render: (r) => `<span class="badge">${esc(r.mukim === 'laju' ? 'laju' : r.mukim === 'mukim' ? 'mukim' : r.status)}</span>` },
+    { key: 'asal_lembaga', label: 'Asal sekolah' }, { key: 'wali', label: 'Wali' }, { key: 'telepon', label: 'Telepon' }],
+  extra: [
+    { label: '🕌 Dari data sekolah', run: (load) => daftarkanKePondok(load) },
+    { label: 'Impor Excel', run: (load) => imporSiswa(load) },
+    { label: '⬇ Template', run: () => download('template/siswa') },
+    { label: '⬇ Data Santri (Excel)', run: () => download('export/santri') },
+    { label: '🪪 Kartu', run: () => { const k = kelasFilter(); if (!k) return toast('Pilih kelas pada filter dulu', true); download('pdf/kartu?' + qs({ kelas_id: k })); } }],
+  fields: [{ name: 'nama', label: 'Nama lengkap', required: true }, { name: 'jk', label: 'Jenis kelamin', options: JK },
+    { name: 'nis', label: 'No. Induk (NIS)' }, { name: 'nisn', label: 'NISN' }, { name: 'nik', label: 'NIK' },
+    { name: 'tempat_lahir', label: 'Tempat lahir' }, { name: 'tgl_lahir', label: 'Tanggal lahir', type: 'date' },
+    { name: 'kelas_id', label: 'Kelas / halaqah', load: optKelas }, { name: 'kamar_id', label: 'Kamar', load: optKamar },
+    { name: 'mukim', label: 'Mukim / laju', options: MUKIM, blank: false, default: 'mukim' },
+    { name: 'status', label: 'Status', blank: false, default: 'aktif', options: STATUS_SISWA.map((v) => ({ value: v, label: v })) },
+    { name: 'tahun_masuk', label: 'Tahun masuk' }, { name: 'nama_ayah', label: 'Nama ayah' }, { name: 'nama_ibu', label: 'Nama ibu' },
+    { name: 'wali', label: 'Wali yang dihubungi', full: true }, { name: 'telepon', label: 'Telepon / HP' }, { name: 'alamat', label: 'Alamat', full: true }],
+}));
+pages.kamar = diPondok(() => crudPage({
+  key: 'kamar', title: 'Kamar / Asrama', single: 'Kamar', scoped: false,
+  columns: [{ key: 'nama', label: 'Kamar' }, { key: 'gedung', label: 'Gedung' }, { label: 'Terisi', render: (r) => `${r.terisi}${r.kapasitas ? ' / ' + r.kapasitas : ''}` }, { key: 'pembina_nama', label: 'Pembina' }],
+  rowActions: [{ name: 'huni', label: 'Penghuni', run: guard(async (r, load) => {
+    const [peng, calon] = await Promise.all([api('siswa?' + qs({ kamar_id: r.id, status: 'aktif' })), api('siswa?status=aktif')]);
+    const dlg = $('#dlg'), f = $('#dlgForm'); dlg.classList.add('wide');
+    const gambar = (peng2, bebas2) => {
+      f.innerHTML = `<h3>${esc(r.nama)} — ${peng2.length}${r.kapasitas ? ' / ' + r.kapasitas : ''} santri</h3>
+        <div class="tablewrap" style="max-height:200px;overflow:auto">${peng2.length ? `<table><tbody>${peng2.map((s) => `<tr><td><input type="checkbox" class="kc" value="${s.id}"></td><td>${esc(s.nama)}</td><td>${esc(s.kelas_nama)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Kamar kosong.</div>'}</div>
+        <button type="button" class="btn small" id="kKel">Keluarkan terpilih</button>
+        <h4>Tambah santri (belum punya kamar)</h4>
+        <div class="tablewrap" style="max-height:200px;overflow:auto">${bebas2.length ? `<table><tbody>${bebas2.map((s) => `<tr><td><input type="checkbox" class="kb" value="${s.id}"></td><td>${esc(s.nama)}</td><td>${esc(s.kelas_nama)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Semua santri sudah punya kamar.</div>'}</div>
+        <p class="error" id="formErr"></p><div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button><button type="button" class="btn primary" id="kTam">Tambahkan terpilih</button></div>`;
+      $('#cancelBtn').onclick = () => { dlg.close(); load(); }; f.onsubmit = (e) => e.preventDefault();
+      const kirim = (sel, kamar) => async () => {
+        const ids = [...document.querySelectorAll(sel + ':checked')].map((c) => Number(c.value)); if (!ids.length) return;
+        try { await api('kamar-tempat', { method: 'POST', body: { siswa_ids: ids, kamar_id: kamar } }); } catch (e) { $('#formErr').textContent = e.message; return; }
+        const [a, b] = await Promise.all([api('siswa?' + qs({ kamar_id: r.id, status: 'aktif' })), api('siswa?status=aktif')]);
+        gambar(a, b.filter((s) => !s.kamar_id));
+      };
+      $('#kKel').onclick = kirim('.kc', null); $('#kTam').onclick = kirim('.kb', r.id);
+    };
+    gambar(peng, calon.filter((s) => !s.kamar_id)); dlg.showModal();
+  }) }],
+  fields: [{ name: 'nama', label: 'Nama kamar', required: true }, { name: 'gedung', label: 'Gedung / asrama' }, { name: 'kapasitas', label: 'Kapasitas', type: 'number' },
+    { name: 'pembina_guru_id', label: 'Pembina kamar', load: optGuru, full: true }],
+}));
+pages.izin = diPondok(() => crudPage({
+  key: 'izin_santri', title: 'Izin Santri (pulang / keluar)', single: 'Izin', scoped: false,
+  filters: [{ key: 'status', label: 'Semua status', load: async () => [{ value: 'izin', label: 'Sedang izin' }, { value: 'terlambat', label: 'Terlambat kembali' }, { value: 'kembali', label: 'Sudah kembali' }] }],
+  columns: [{ key: 'siswa_nama', label: 'Santri' }, { key: 'jenis', label: 'Jenis' }, { key: 'tgl_pergi', label: 'Pergi' }, { key: 'tgl_kembali', label: 'Harus kembali' }, { key: 'tgl_kembali_nyata', label: 'Kembali' },
+    { label: 'Status', render: (r) => `<span class="badge" ${r.status === 'terlambat' ? 'style="background:var(--bad);color:#fff"' : ''}>${esc(r.status)}</span>` }, { key: 'alasan', label: 'Alasan' }],
+  rowActions: [{ name: 'kembali', label: 'Tandai kembali', show: (r) => !r.tgl_kembali_nyata, run: guard(async (r, load) => { await api('izin_santri/' + r.id, { method: 'PUT', body: { tgl_kembali_nyata: today() } }); toast('Santri ditandai sudah kembali'); load(); }) }],
+  fields: [{ name: 'siswa_id', label: 'Santri', load: optSiswa, required: true, full: true },
+    { name: 'jenis', label: 'Jenis', blank: false, default: 'pulang', options: ['pulang', 'keluar', 'sakit', 'kegiatan'].map((v) => ({ value: v, label: v })) },
+    { name: 'tgl_pergi', label: 'Tanggal pergi', type: 'date', required: true, default: today() }, { name: 'tgl_kembali', label: 'Harus kembali', type: 'date', required: true },
+    { name: 'alasan', label: 'Alasan', full: true }, { name: 'penjemput', label: 'Penjemput' }],
+}));
+
 // ---- shell ----
 const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'], GURU = ['yayasan', 'admin', 'staf', 'guru'];
 const KEU = ['yayasan', 'bendahara_yayasan', 'bendahara'], DASH = ['yayasan', 'admin', 'staf', 'bendahara_yayasan', 'bendahara'];
 const ROLE_LABEL = { yayasan: 'Admin Yayasan', bendahara_yayasan: 'Bendahara Yayasan', admin: 'Admin Lembaga', bendahara: 'Bendahara Lembaga', staf: 'Staf', guru: 'Guru' };
 const MENU = [['dashboard', 'Dashboard', DASH], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', GURU], ['pelanggaran', 'Pelanggaran', GURU],
-  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['penyusun', 'Susun Jadwal', ADM], ['ujian', 'Ujian Online', GURU], ['materi', 'Materi Belajar', GURU], ['akunsiswa', 'Akun Siswa', ALL], ['pembayaran', 'Pembayaran', KEU], ['tagihan', 'Tagihan', KEU], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['santri', 'Santri (Pondok)', ALL], ['kamar', 'Kamar / Asrama', ALL], ['izin', 'Izin Santri', ALL], ['penyusun', 'Susun Jadwal', ADM], ['ujian', 'Ujian Online', GURU], ['materi', 'Materi Belajar', GURU], ['akunsiswa', 'Akun Siswa', ALL], ['pembayaran', 'Pembayaran', KEU], ['tagihan', 'Tagihan', KEU], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
   ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']], ['audit', 'Jejak Audit', ['yayasan']]];
 
 function route() {
@@ -1202,7 +1315,7 @@ function showApp() {
   if (me.role === 'wali') { location.href = '/wali'; return; }
   if (me.role === 'siswa') { location.href = '/siswa'; return; }
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
-  $('#nav').innerHTML = MENU.filter((m) => m[2].includes(me.role)).map(([k, l]) => `<a href="#/${k}" data-p="${k}">${l}</a>`).join('');
+  $('#nav').innerHTML = MENU.filter((m) => m[2].includes(me.role) && (!['santri', 'kamar', 'izin'].includes(m[0]) || pondokAda())).map(([k, l]) => `<a href="#/${k}" data-p="${k}">${l}</a>`).join('');
   $('#who').textContent = `${me.nama} (${ROLE_LABEL[me.role] || me.role})`;
   let saved = null; try { saved = localStorage.getItem('lembaga'); } catch {}
   scope = me.lembagas.some((l) => String(l.id) === saved) ? Number(saved) : (me.lembagas.length === 1 ? me.lembagas[0].id : 'all');

@@ -27,6 +27,7 @@ const ALIAS = {
   kode_pos: ['kodepos'], jenis_tinggal: ['jenistinggal'], transportasi: ['alattransportasi', 'transportasi'],
   telepon: ['telepon', 'notelepon', 'telp'], hp: ['hp', 'nohp', 'nomorhp'], email: ['email'],
   status_ulang: ['status'],
+  kamar: ['kamar', 'asrama', 'kamarasrama'], mukim: ['mukim', 'statusmukim', 'mukimlaju'],
 };
 const LOOKUP = new Map();
 for (const [field, keys] of Object.entries(ALIAS)) for (const k of keys) if (!LOOKUP.has(k)) LOOKUP.set(k, field);
@@ -100,6 +101,7 @@ function parseSheet(rows) {
         if (t === undefined) warnings.push(`Baris ${r + 1}: tanggal lahir "${str(v)}" tidak dikenali, dilewati`); else if (t) rec.tgl_lahir = t;
       } else if (f === 'jk') { const x = jk(v); if (x) rec.jk = x; }
       else if (['nik', 'no_kk', 'nik_ayah', 'nik_ibu', 'nisn', 'nis_lokal', 'kip_kemenag', 'kip_diknas', 'kps', 'pkh', 'sktm', 'kode_pos'].includes(f)) { const x = digits(v); if (x) rec[f] = x; }
+      else if (f === 'mukim') { const x = norm(v); if (x.startsWith('muk')) rec.mukim = 'mukim'; else if (x.startsWith('laj') || x.startsWith('pp')) rec.mukim = 'laju'; }
       else if (f === 'status_ulang') { const s = norm(v); if (s) rec.mengulang = s.includes('mengulang') && !s.includes('tidak') ? 1 : 0; }
       else if (f === 'desa') { const x = bersih(v, /^desa\/kel\.?\s*/i); if (x) rec.desa = x; }
       else if (f === 'kecamatan') { const x = bersih(v, /^kec\.?\s*/i); if (x) rec.kecamatan = x; }
