@@ -449,20 +449,23 @@ pages.profil = guard(async () => {
 // ---- dashboard ----
 pages.dashboard = guard(async () => {
   const d = await api('dashboard');
-  const a = d.absensi_hari_ini;
-  const bars = (rows, label) => { const max = Math.max(1, ...rows.map((r) => r.jumlah)); return rows.map((r) =>
-    `<div><span>${esc(label(r))}</span><i style="width:${r.jumlah / max * 100}%"></i><span>${r.jumlah}</span></div>`).join('') || '<p class="empty">Belum ada data.</p>'; };
-  $('#main').innerHTML = `<h2>Dashboard</h2><div class="stats">
-    ${[['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pendaftar baru', d.pendaftar_baru], ...(d.permintaan_baru ? [['Permintaan data baru', d.permintaan_baru]] : []), ['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)], ['Tunggakan (lewat jatuh tempo)', rp(d.tunggakan)]]
-      .map(([l, n]) => `<div class="card stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('')}</div>
-    <div class="grid2"><div class="card"><b>Absensi hari ini</b><p>Hadir ${a.H || 0} · Sakit ${a.S || 0} · Izin ${a.I || 0} · Alpa ${a.A || 0}</p></div>
+  const a = d.absensi_hari_ini || {}, akad = d.siswa !== undefined, keu = d.pembayaran_bulan_ini !== undefined;
+  const bars = (rows, label, fmt = (v) => v, key = 'jumlah') => { const max = Math.max(1, ...rows.map((r) => r[key])); return rows.map((r) =>
+    `<div><span>${esc(label(r))}</span><i style="width:${r[key] / max * 100}%"></i><span>${fmt(r[key])}</span></div>`).join('') || '<p class="empty">Belum ada data.</p>'; };
+  const tiles = [...(akad ? [['Siswa aktif', d.siswa], ['Guru', d.guru], ['Kelas', d.kelas], ['Pendaftar baru', d.pendaftar_baru], ...(d.permintaan_baru ? [['Permintaan data baru', d.permintaan_baru]] : [])] : []),
+    ...(keu ? [['Pembayaran bulan ini', rp(d.pembayaran_bulan_ini)], ['Tunggakan (lewat jatuh tempo)', rp(d.tunggakan)]] : [])];
+  const judul = d.multi ? 'Dashboard Yayasan' : `Dashboard ${(me.lembagas.find((l) => l.id === scope) || me.lembagas[0] || {}).nama || ''}`;
+  $('#main').innerHTML = `<h2>${esc(judul)}</h2><div class="stats">${tiles.map(([l, n]) => `<div class="card stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('')}</div>
+    ${akad ? `<div class="grid2"><div class="card"><b>Absensi hari ini</b><p>Hadir ${a.H || 0} · Sakit ${a.S || 0} · Izin ${a.I || 0} · Alpa ${a.A || 0}</p></div>
     ${d.multi ? `<div class="card"><b>Siswa per lembaga</b><div class="bars">${bars(d.per_lembaga, (r) => r.kode)}</div></div>` : ''}
     <div class="card"><b>Siswa per kelas</b><div class="bars">${bars(d.per_kelas, (k) => (d.multi ? k.lembaga_kode + ' ' : '') + k.nama)}</div></div></div>
     <div class="grid2" style="margin-top:12px"><div class="card"><b>Kehadiran 14 hari terakhir</b>${d.tren_hadir.length ? `<div class="bars">${d.tren_hadir.map((r) => { const pct = Math.round(r.h / r.n * 100);
       return `<div><span>${esc(r.tanggal.slice(5))}</span><i style="width:${pct}%"></i><span>${pct}%</span></div>`; }).join('')}</div>` : '<p class="empty">Belum ada data absensi.</p>'}</div>
-      <div class="card"><b>Tunggakan per lembaga</b>${d.tunggakan_per_lembaga.length ? `<div class="bars">${d.tunggakan_per_lembaga.map((r) => `<div><span>${esc(r.kode)}</span><i style="width:${r.jumlah / d.tunggakan_per_lembaga[0].jumlah * 100}%"></i><span>${rp(r.jumlah)}</span></div>`).join('')}</div>` : '<p class="empty">Tidak ada tunggakan.</p>'}</div></div>
-    <div class="card" style="margin-top:12px"><b>Perlu perhatian</b><p class="empty" style="text-align:left;padding:2px 0 8px">Poin pelanggaran ≥ 50 atau alpa ≥ 3 kali dalam 30 hari terakhir.</p>
-      ${d.berisiko.length ? `<div class="tablewrap"><table><thead><tr><th>Siswa</th><th>Kelas</th><th>Poin</th><th>Alpa 30 hari</th></tr></thead><tbody>${d.berisiko.map((r) => `<tr><td>${esc(r.nama)}</td><td>${esc((d.multi ? r.lembaga_kode + ' ' : '') + (r.kelas_nama || ''))}</td><td>${r.poin}</td><td>${r.alpa}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Tidak ada.</p>'}</div>`;
+      <div class="card"><b>Perlu perhatian</b><p class="empty" style="text-align:left;padding:2px 0 8px">Poin pelanggaran ≥ 50 atau alpa ≥ 3 kali dalam 30 hari terakhir.</p>
+      ${d.berisiko.length ? `<div class="tablewrap"><table><thead><tr><th>Siswa</th><th>Kelas</th><th>Poin</th><th>Alpa</th></tr></thead><tbody>${d.berisiko.map((r) => `<tr><td>${esc(r.nama)}</td><td>${esc((d.multi ? r.lembaga_kode + ' ' : '') + (r.kelas_nama || ''))}</td><td>${r.poin}</td><td>${r.alpa}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Tidak ada.</p>'}</div></div>` : ''}
+    ${keu ? `<div class="grid2" style="margin-top:12px"><div class="card"><b>Pembayaran 6 bulan terakhir</b><div class="bars">${bars(d.pembayaran_per_bulan, (r) => r.bulan, rp)}</div></div>
+      <div class="card"><b>Tunggakan per lembaga</b>${d.tunggakan_per_lembaga.length ? `<div class="bars">${bars(d.tunggakan_per_lembaga, (r) => r.kode, rp)}</div>` : '<p class="empty">Tidak ada tunggakan.</p>'}</div>
+      ${d.multi ? `<div class="card"><b>Pembayaran bulan ini per lembaga</b><div class="bars">${bars(d.pembayaran_per_lembaga, (r) => r.kode, rp)}</div></div>` : ''}</div>` : ''}`;
 });
 
 // ---- absensi ----
@@ -786,12 +789,12 @@ pages.rapor = guard(async () => {
 pages.pengguna = guard(async () => {
   const lembagaOpts = me.lembagas.map((l) => ({ value: l.id, label: l.nama }));
   const kode = (ids) => ids.map((i) => (me.lembagas.find((l) => l.id === i) || {}).kode).filter(Boolean).join(', ');
-  const roles = me.role === 'yayasan' ? [['yayasan', 'Admin Yayasan (semua lembaga)'], ['admin', 'Admin Lembaga'], ['staf', 'Staf'], ['guru', 'Guru (absensi & pelanggaran)']] : [['staf', 'Staf'], ['guru', 'Guru (absensi & pelanggaran)']];
+  const roles = me.role === 'yayasan' ? [['yayasan', 'Admin Yayasan (semua lembaga)'], ['bendahara_yayasan', 'Bendahara Yayasan (keuangan semua lembaga)'], ['admin', 'Admin Lembaga'], ['bendahara', 'Bendahara Lembaga (keuangan lembaganya)'], ['staf', 'Staf'], ['guru', 'Guru (absensi & pelanggaran)']] : [['staf', 'Staf'], ['guru', 'Guru (absensi & pelanggaran)']];
   const load = guard(async () => {
     const rows = await api('users');
     $('#main').innerHTML = `<h2>Pengguna</h2><div class="bar"><span class="grow"></span><button class="btn primary" id="add">+ Tambah</button></div>
       <div class="tablewrap"><table><thead><tr><th>Username</th><th>Nama</th><th>Peran</th><th>No. WhatsApp</th><th>Lembaga</th><th></th></tr></thead><tbody>${rows.map((u) =>
-        `<tr><td>${esc(u.username)}</td><td>${esc(u.nama)}</td><td><span class="badge">${esc(u.role)}</span></td><td>${esc(u.wa)}</td><td>${u.role === 'yayasan' ? 'Semua' : esc(kode(u.lembaga_ids))}</td>
+        `<tr><td>${esc(u.username)}</td><td>${esc(u.nama)}</td><td><span class="badge">${esc(ROLE_LABEL[u.role] || u.role)}</span></td><td>${esc(u.wa)}</td><td>${u.role === 'yayasan' || u.role === 'bendahara_yayasan' ? 'Semua' : esc(kode(u.lembaga_ids))}</td>
         <td class="act">${me.role !== 'yayasan' && u.role !== 'staf' && u.role !== 'guru' ? '' : `<button class="btn small" data-a="edit" data-id="${u.id}">Ubah</button>
         ${u.id === me.id ? '' : `<button class="btn small danger" data-a="del" data-id="${u.id}">Hapus</button>`}`}</td></tr>`).join('')}</tbody></table></div>
       <p class="empty" style="text-align:left">Kosongkan password saat mengubah jika tidak ingin menggantinya. Guru yang hanya memakai WhatsApp tidak perlu password: isi No. WhatsApp saja.</p>`;
@@ -910,8 +913,10 @@ pages.audit = guard(async () => {
 
 // ---- shell ----
 const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'], GURU = ['yayasan', 'admin', 'staf', 'guru'];
-const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', GURU], ['pelanggaran', 'Pelanggaran', GURU],
-  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['ujian', 'Ujian Online', GURU], ['materi', 'Materi Belajar', GURU], ['akunsiswa', 'Akun Siswa', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
+const KEU = ['yayasan', 'bendahara_yayasan', 'bendahara'], DASH = ['yayasan', 'admin', 'staf', 'bendahara_yayasan', 'bendahara'];
+const ROLE_LABEL = { yayasan: 'Admin Yayasan', bendahara_yayasan: 'Bendahara Yayasan', admin: 'Admin Lembaga', bendahara: 'Bendahara Lembaga', staf: 'Staf', guru: 'Guru' };
+const MENU = [['dashboard', 'Dashboard', DASH], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', GURU], ['pelanggaran', 'Pelanggaran', GURU],
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['ujian', 'Ujian Online', GURU], ['materi', 'Materi Belajar', GURU], ['akunsiswa', 'Akun Siswa', ALL], ['pembayaran', 'Pembayaran', KEU], ['tagihan', 'Tagihan', KEU], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
   ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']], ['audit', 'Jejak Audit', ['yayasan']]];
 
 function route() {
@@ -934,9 +939,10 @@ function forcePassword() {
 }
 function showApp() {
   if (me.role === 'wali') { location.href = '/wali'; return; }
+  if (me.role === 'siswa') { location.href = '/siswa'; return; }
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#nav').innerHTML = MENU.filter((m) => m[2].includes(me.role)).map(([k, l]) => `<a href="#/${k}" data-p="${k}">${l}</a>`).join('');
-  $('#who').textContent = `${me.nama} (${me.role})`;
+  $('#who').textContent = `${me.nama} (${ROLE_LABEL[me.role] || me.role})`;
   let saved = null; try { saved = localStorage.getItem('lembaga'); } catch {}
   scope = me.lembagas.some((l) => String(l.id) === saved) ? Number(saved) : (me.lembagas.length === 1 ? me.lembagas[0].id : 'all');
   const sw = $('#lembaga');

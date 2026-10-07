@@ -1222,3 +1222,83 @@ test('aplikasi belajar siswa: akun siswa, materi, ujian online sampai masuk ke n
   assert.deepStrictEqual([hs.nilai, hs.tampil_nilai], [null, false]);                                          // guru menyembunyikan nilai dari siswa
   assert.strictEqual((await siswaB('belajar/nilai')).data.length, 0);
 });
+
+test('peran berjenjang: admin yayasan, bendahara yayasan/lembaga, admin lembaga, staf', async (t) => {
+  const { client } = await boot(t);
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [MI, SMP] = [id('MI'), id('SMP')];
+  const mk = async (username, role, lembaga_ids) => {
+    assert.strictEqual((await yys('users', 'POST', { username, password: 'rahasia123', nama: username, role, lembaga_ids })).status, 200, username);
+    const c = client(); await c('login', 'POST', { username, password: 'rahasia123' });
+    await c('password', 'POST', { lama: 'rahasia123', baru: 'rahasia456' }); return c;
+  };
+  const bY = await mk('bendahara.yys', 'bendahara_yayasan', []);
+  const bMI = await mk('bendahara.mi', 'bendahara', [MI]);
+  const aMI = await mk('admin.mi', 'admin', [MI]);
+  const sMI = await mk('staf.mi', 'staf', [MI]);
+  assert.deepStrictEqual((await bY('me')).data.lembagas.length, 7);                     // bendahara yayasan = semua lembaga
+  assert.deepStrictEqual((await bMI('me')).data.lembagas.map((l) => l.kode), ['MI']);
+
+  // data
+  const kMI = (await yys('kelas', 'POST', { nama: '1' }, MI)).data.id, kSMP = (await yys('kelas', 'POST', { nama: 'VII' }, SMP)).data.id;
+  const sm = (await yys('siswa', 'POST', { nama: 'Anak MI', nis: '1', nik: '3522000000000001', kelas_id: kMI }, MI)).data.id;
+  const ss = (await yys('siswa', 'POST', { nama: 'Anak SMP', nis: '1', kelas_id: kSMP }, SMP)).data.id;
+  const bln = tgl.slice(0, 7);
+  await yys('tagihan', 'POST', { siswa_id: sm, jumlah: 100000, periode: bln, jatuh_tempo: '2020-01-01' });
+  await yys('tagihan', 'POST', { siswa_id: ss, jumlah: 200000, periode: bln, jatuh_tempo: '2020-01-01' });
+
+  // bendahara yayasan: keuangan semua lembaga, tanpa akademik
+  assert.strictEqual((await bY('tagihan')).data.length, 2);
+  const pb = await bY('pembayaran', 'POST', { siswa_id: ss, jumlah: 50000, tanggal: tgl, jenis: 'SPP', bulan: bln }, SMP);
+  assert.strictEqual(pb.status, 200);
+  assert.strictEqual((await bY('pdf/kuitansi?id=' + pb.data.id)).status, 200);
+  assert.strictEqual((await bY('export/pembayaran')).status, 200);
+  assert.strictEqual((await bY('tagihan/generate', 'POST', { kelas_id: kMI, periode: '2099-01', jumlah: 1 }, MI)).status, 200);
+  const dBY = (await bY('dashboard')).data;
+  assert.strictEqual(dBY.pembayaran_bulan_ini, 50000); assert.strictEqual(dBY.tunggakan, 250000);
+  assert.strictEqual(dBY.siswa, undefined); assert.strictEqual(dBY.berisiko, undefined);          // tidak ada data akademik di dashboard
+  assert.deepStrictEqual(dBY.tunggakan_per_lembaga.map((r) => r.kode).sort(), ['MI', 'SMP']);
+  const lihat = (await bY('siswa', 'GET', null, MI)).data[0];
+  assert.strictEqual(lihat.nama, 'Anak MI'); assert.ok(!('nik' in lihat));                         // data pribadi disembunyikan
+  for (const [p, m, b] of [['siswa', 'POST', { nama: 'X' }], [`siswa/${sm}`, 'PUT', { nama: 'Y' }], ['nilai'], ['jadwal'], ['ujian'], ['absensi?kelas_id=1&tanggal=' + tgl], ['users'], ['audit'], ['wa/status'],
+    ['export/siswa'], ['pdf/rapor?siswa_id=' + sm], ['lembaga/' + MI, 'PUT', { nama: 'Z' }], ['pengumuman'], ['kenaikan', 'POST', {}], ['profil']]) {
+    assert.strictEqual((await bY(p, m || 'GET', b)).status, 403, p);
+  }
+
+  // bendahara lembaga: hanya keuangan lembaganya
+  assert.deepStrictEqual([...new Set((await bMI('tagihan')).data.map((r) => r.lembaga_kode))], ['MI']);
+  assert.strictEqual((await bMI('tagihan', 'GET', null, SMP)).status, 403);
+  assert.strictEqual((await bMI('pembayaran', 'POST', { siswa_id: ss, jumlah: 1, tanggal: tgl }, MI)).status, 404);   // siswa lembaga lain
+  assert.strictEqual((await bMI('pembayaran', 'POST', { siswa_id: sm, jumlah: 25000, tanggal: tgl, jenis: 'SPP', bulan: bln }, MI)).status, 200);
+  const dMI = (await bMI('dashboard')).data;
+  assert.deepStrictEqual([dMI.pembayaran_bulan_ini, dMI.tunggakan, dMI.multi], [25000, 75000, false]);
+  assert.strictEqual((await bMI('users')).status, 403);
+
+  // admin lembaga: dashboard & operasional lembaganya, tanpa keuangan
+  const dA = (await aMI('dashboard')).data;
+  assert.deepStrictEqual([dA.siswa, dA.multi, dA.pembayaran_bulan_ini, dA.tunggakan], [1, false, undefined, undefined]);
+  assert.strictEqual((await aMI('dashboard', 'GET', null, SMP)).status, 403);
+  for (const p of ['pembayaran', 'tagihan', 'export/pembayaran', 'export/tagihan', 'pdf/kuitansi?id=1']) assert.strictEqual((await aMI(p)).status, 403, p);
+  for (const [p, b] of [['pembayaran', { siswa_id: sm, jumlah: 1, tanggal: tgl }], ['tagihan/generate', { kelas_id: kMI, periode: '2099-02', jumlah: 1 }], ['pengingat-tagihan', {}]]) assert.strictEqual((await aMI(p, 'POST', b, MI)).status, 403, p);
+  assert.strictEqual((await aMI('siswa')).data.length, 1);                                       // akademik lembaganya tetap bisa
+  assert.strictEqual((await aMI('lembaga/' + MI, 'PUT', { nama: 'Z' })).status, 403);            // pengaturan yayasan tidak
+  assert.strictEqual((await aMI('profil')).status, 403);
+  // akun hanya dipegang admin yayasan: admin lembaga cuma boleh membuat staf/guru di lembaganya
+  assert.strictEqual((await aMI('users', 'POST', { username: 'bend2', password: 'rahasia123', nama: 'B', role: 'bendahara', lembaga_ids: [MI] })).status, 400);
+  assert.strictEqual((await aMI('users', 'POST', { username: 'adm2', password: 'rahasia123', nama: 'A', role: 'admin', lembaga_ids: [MI] })).status, 400);
+  assert.strictEqual((await aMI('users', 'POST', { username: 'staf2', password: 'rahasia123', nama: 'S', role: 'staf', lembaga_ids: [MI] })).status, 200);
+  assert.deepStrictEqual((await aMI('users')).data.map((u) => u.role).sort(), ['admin', 'staf', 'staf']);   // bendahara & yayasan tidak terlihat
+  const bendId = (await yys('users')).data.find((u) => u.username === 'bendahara.mi').id;
+  assert.strictEqual((await aMI(`users/${bendId}`, 'DELETE')).status, 404);
+  assert.strictEqual((await aMI(`users/${bendId}`, 'PUT', { role: 'admin' })).status, 404);
+
+  // staf: tidak ada keuangan
+  for (const p of ['pembayaran', 'tagihan']) assert.strictEqual((await sMI(p)).status, 403, p);
+  assert.strictEqual((await sMI('siswa')).status, 200);
+
+  // wali tetap melihat tagihan anaknya
+  await yys('wali-akun', 'POST', { siswa_id: sm, username: '081200001111' });
+  assert.strictEqual((await yys('users')).data.some((u) => u.role === 'wali'), false);
+});

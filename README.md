@@ -4,6 +4,17 @@ Aplikasi web untuk administrasi seluruh lembaga di bawah Yayasan Miftahul Ulumil
 Pondok Pesantren, SMK, SMP Plus (Tambakrejo), MI, RA Muslimat, Madin Ula, dan Madin Wustho.
 Tanpa dependensi eksternal: Node.js (>= 22.13) + SQLite bawaan Node + frontend HTML/JS.
 
+## Peran berjenjang
+| Peran | Cakupan | Akses |
+|---|---|---|
+| **Admin Yayasan** | semua lembaga | semuanya: lembaga, tahun ajaran, profil yayasan, jejak audit, **semua akun pengguna** |
+| **Bendahara Yayasan** | semua lembaga | hanya **keuangan**: pembayaran, tagihan, kuitansi, pengingat WA, dashboard keuangan; siswa hanya dibaca (tanpa data pribadi) |
+| **Admin Lembaga** | lembaganya saja | dashboard & operasional lembaganya (siswa, absensi, nilai, rapor, jadwal, ujian, PPDB, WhatsApp); **tanpa keuangan**, tanpa pengaturan yayasan; hanya boleh membuat akun staf/guru lembaganya |
+| **Bendahara Lembaga** | lembaganya saja | seperti Bendahara Yayasan, tetapi hanya untuk lembaganya |
+| **Staf / Guru** | lembaganya saja | staf: operasional tanpa keuangan; guru: absensi, pelanggaran, ujian & materi |
+
+Akun admin lembaga dan bendahara hanya dapat dibuat oleh Admin Yayasan. Wali murid dan siswa memakai aplikasi sendiri (`/wali`, `/siswa`).
+
 ## Fitur
 - **Multi-lembaga**: data tiap lembaga terpisah; pilih lembaga aktif lewat menu di samping
 - **Peran**: *Admin Yayasan* (semua lembaga), *Admin Lembaga* (lembaganya + kelola staf), *Staf*

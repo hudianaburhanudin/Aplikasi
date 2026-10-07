@@ -182,7 +182,15 @@ const KENAIKAN = ['naik', 'lulus', 'pindah', 'keluar'];
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
 const ABSEN = new Set(['H', 'S', 'I', 'A']);
-const ROLES = ['yayasan', 'admin', 'staf', 'guru']; // 'wali' dikelola lewat /api/wali-akun
+const ROLES = ['yayasan', 'bendahara_yayasan', 'admin', 'bendahara', 'staf', 'guru'];
+// Berjenjang: yayasan (semua) > bendahara_yayasan (keuangan semua lembaga) | admin lembaga & bendahara lembaga (hanya lembaganya) > staf > guru
+const KEUANGAN = new Set(['yayasan', 'bendahara_yayasan', 'bendahara']);
+const SEMUA_LEMBAGA = new Set(['yayasan', 'bendahara_yayasan']);
+const API_KEUANGAN = new Set(['pembayaran', 'tagihan', 'pengingat-tagihan']);
+const KEY_KEUANGAN = new Set(['pembayaran', 'tagihan', 'kuitansi']);       // ekspor/PDF keuangan
+const BENDAHARA_API = new Set(['me', 'logout', 'password', 'dashboard', 'pembayaran', 'tagihan', 'pengingat-tagihan', 'siswa', 'kelas', 'lembaga', 'tahun_ajaran', 'export', 'pdf']);
+const BENDAHARA_BACA = new Set(['siswa', 'kelas', 'lembaga', 'tahun_ajaran']);
+const isBendahara = (r) => r === 'bendahara' || r === 'bendahara_yayasan'; // 'wali' dikelola lewat /api/wali-akun
 // Guru hanya boleh: absensi dan pelanggaran (tulis), serta melihat kelas/siswa/jenis pelanggaran.
 const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran', 'jadwal', 'jadwal-kelas', 'ujian', 'ujian-soal', 'ujian-hasil', 'materi']);
 // Data pribadi siswa yang tidak perlu dilihat guru
@@ -262,7 +270,7 @@ function createApp(dbFile, opts = {}) {
 
   // ---- pengguna & lingkup lembaga ----
   const allLembaga = () => db.prepare('SELECT id, kode, nama FROM lembaga ORDER BY id').all();
-  const userLembagaIds = (u) => (u.role === 'yayasan'
+  const userLembagaIds = (u) => (SEMUA_LEMBAGA.has(u.role)
     ? allLembaga().map((l) => l.id)
     : db.prepare('SELECT lembaga_id id FROM user_lembaga WHERE user_id = ?').all(u.id).map((r) => r.id));
   const publicUser = (u) => {
@@ -809,37 +817,48 @@ function createApp(dbFile, opts = {}) {
   }
 
   function dashboard(ctx) {
-    const ids = ctx.scope.ids, p = ph(ids), today = todayWib(), bulan = today.slice(0, 7);
+    const ids = ctx.scope.ids, p = ph(ids), today = todayWib(), bulan = today.slice(0, 7), role = ctx.user.role;
     const n = (sql, ...a) => db.prepare(sql).get(...a).n;
-    const abs = {};
-    for (const r of db.prepare(`SELECT a.status, COUNT(*) n FROM absensi a JOIN siswa s ON s.id = a.siswa_id
-        WHERE a.tanggal = ? AND s.lembaga_id IN (${p}) GROUP BY a.status`).all(today, ...ids)) abs[r.status] = r.n;
-    return {
-      siswa: n(`SELECT COUNT(*) n FROM siswa WHERE status = 'aktif' AND lembaga_id IN (${p})`, ...ids),
-      guru: n(`SELECT COUNT(*) n FROM guru WHERE lembaga_id IN (${p})`, ...ids),
-      kelas: n(`SELECT COUNT(*) n FROM kelas WHERE lembaga_id IN (${p})`, ...ids),
-      pendaftar_baru: n(`SELECT COUNT(*) n FROM pendaftar WHERE status = 'baru' AND lembaga_id IN (${p})`, ...ids),
-      permintaan_baru: permintaanList(ctx).filter((r) => r.status === 'baru').length,
-      tunggakan: n(`SELECT COALESCE(SUM(sisa), 0) n FROM (SELECT ${TSISA} sisa FROM tagihan t JOIN siswa s ON s.id = t.siswa_id
-        WHERE s.lembaga_id IN (${p}) AND t.jatuh_tempo < ?)`, ...ids, today),
-      absensi_hari_ini: abs,
-      pembayaran_bulan_ini: n(`SELECT COALESCE(SUM(p.jumlah), 0) n FROM pembayaran p JOIN siswa s ON s.id = p.siswa_id
-        WHERE substr(p.tanggal, 1, 7) = ? AND s.lembaga_id IN (${p})`, bulan, ...ids),
-      tren_hadir: db.prepare(`SELECT a.tanggal, SUM(a.status = 'H') h, COUNT(*) n FROM absensi a JOIN siswa s ON s.id = a.siswa_id
-        WHERE s.lembaga_id IN (${p}) AND a.tanggal > date(?, '-14 days') AND a.tanggal <= ? GROUP BY a.tanggal ORDER BY a.tanggal`).all(...ids, today, today),
-      tunggakan_per_lembaga: db.prepare(`SELECT l.kode, COALESCE(SUM(${TSISA}), 0) jumlah FROM tagihan t JOIN siswa s ON s.id = t.siswa_id JOIN lembaga l ON l.id = s.lembaga_id
-        WHERE s.lembaga_id IN (${p}) AND t.jatuh_tempo < ? GROUP BY l.id HAVING jumlah > 0 ORDER BY jumlah DESC`).all(...ids, today),
-      berisiko: db.prepare(`SELECT * FROM (SELECT s.id, s.nama, l.kode lembaga_kode, k.nama kelas_nama,
-          COALESCE((SELECT SUM(v.poin) FROM pelanggaran v WHERE v.siswa_id = s.id), 0) poin,
-          (SELECT COUNT(*) FROM absensi a WHERE a.siswa_id = s.id AND a.status = 'A' AND a.tanggal > date(?, '-30 days')) alpa
-        FROM siswa s JOIN lembaga l ON l.id = s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id WHERE s.status = 'aktif' AND s.lembaga_id IN (${p}))
-        WHERE poin >= 50 OR alpa >= 3 ORDER BY poin DESC, alpa DESC LIMIT 15`).all(today, ...ids),
-      multi: ids.length > 1,
-      per_lembaga: db.prepare(`SELECT l.kode, l.nama, COUNT(s.id) jumlah FROM lembaga l
-        LEFT JOIN siswa s ON s.lembaga_id = l.id AND s.status = 'aktif' WHERE l.id IN (${p}) GROUP BY l.id ORDER BY l.id`).all(...ids),
-      per_kelas: db.prepare(`SELECT k.nama, l.kode lembaga_kode, COUNT(s.id) jumlah FROM kelas k JOIN lembaga l ON l.id = k.lembaga_id
-        LEFT JOIN siswa s ON s.kelas_id = k.id AND s.status = 'aktif' WHERE k.lembaga_id IN (${p}) GROUP BY k.id ORDER BY l.id, k.nama`).all(...ids),
-    };
+    const out = { multi: ids.length > 1, peran: role, per_lembaga: db.prepare(`SELECT l.kode, l.nama, COUNT(s.id) jumlah FROM lembaga l
+        LEFT JOIN siswa s ON s.lembaga_id = l.id AND s.status = 'aktif' WHERE l.id IN (${p}) GROUP BY l.id ORDER BY l.id`).all(...ids) };
+    if (!isBendahara(role)) {                         // bagian akademik: admin yayasan, admin lembaga, staf, guru (terbatas pada lembaganya)
+      const abs = {};
+      for (const r of db.prepare(`SELECT a.status, COUNT(*) n FROM absensi a JOIN siswa s ON s.id = a.siswa_id
+          WHERE a.tanggal = ? AND s.lembaga_id IN (${p}) GROUP BY a.status`).all(today, ...ids)) abs[r.status] = r.n;
+      Object.assign(out, {
+        siswa: n(`SELECT COUNT(*) n FROM siswa WHERE status = 'aktif' AND lembaga_id IN (${p})`, ...ids),
+        guru: n(`SELECT COUNT(*) n FROM guru WHERE lembaga_id IN (${p})`, ...ids),
+        kelas: n(`SELECT COUNT(*) n FROM kelas WHERE lembaga_id IN (${p})`, ...ids),
+        pendaftar_baru: n(`SELECT COUNT(*) n FROM pendaftar WHERE status = 'baru' AND lembaga_id IN (${p})`, ...ids),
+        permintaan_baru: permintaanList(ctx).filter((r) => r.status === 'baru').length,
+        absensi_hari_ini: abs,
+        tren_hadir: db.prepare(`SELECT a.tanggal, SUM(a.status = 'H') h, COUNT(*) n FROM absensi a JOIN siswa s ON s.id = a.siswa_id
+          WHERE s.lembaga_id IN (${p}) AND a.tanggal > date(?, '-14 days') AND a.tanggal <= ? GROUP BY a.tanggal ORDER BY a.tanggal`).all(...ids, today, today),
+        berisiko: db.prepare(`SELECT * FROM (SELECT s.id, s.nama, l.kode lembaga_kode, k.nama kelas_nama,
+            COALESCE((SELECT SUM(v.poin) FROM pelanggaran v WHERE v.siswa_id = s.id), 0) poin,
+            (SELECT COUNT(*) FROM absensi a WHERE a.siswa_id = s.id AND a.status = 'A' AND a.tanggal > date(?, '-30 days')) alpa
+          FROM siswa s JOIN lembaga l ON l.id = s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id WHERE s.status = 'aktif' AND s.lembaga_id IN (${p}))
+          WHERE poin >= 50 OR alpa >= 3 ORDER BY poin DESC, alpa DESC LIMIT 15`).all(today, ...ids),
+        per_kelas: db.prepare(`SELECT k.nama, l.kode lembaga_kode, COUNT(s.id) jumlah FROM kelas k JOIN lembaga l ON l.id = k.lembaga_id
+          LEFT JOIN siswa s ON s.kelas_id = k.id AND s.status = 'aktif' WHERE k.lembaga_id IN (${p}) GROUP BY k.id ORDER BY l.id, k.nama`).all(...ids),
+      });
+    }
+    if (KEUANGAN.has(role)) {                         // bagian keuangan: admin yayasan dan bendahara
+      const awal = new Date(Date.UTC(Number(bulan.slice(0, 4)), Number(bulan.slice(5)) - 6, 1)).toISOString().slice(0, 7);
+      Object.assign(out, {
+        pembayaran_bulan_ini: n(`SELECT COALESCE(SUM(p.jumlah), 0) n FROM pembayaran p JOIN siswa s ON s.id = p.siswa_id
+          WHERE substr(p.tanggal, 1, 7) = ? AND s.lembaga_id IN (${p})`, bulan, ...ids),
+        tunggakan: n(`SELECT COALESCE(SUM(sisa), 0) n FROM (SELECT ${TSISA} sisa FROM tagihan t JOIN siswa s ON s.id = t.siswa_id
+          WHERE s.lembaga_id IN (${p}) AND t.jatuh_tempo < ?)`, ...ids, today),
+        tunggakan_per_lembaga: db.prepare(`SELECT l.kode, COALESCE(SUM(${TSISA}), 0) jumlah FROM tagihan t JOIN siswa s ON s.id = t.siswa_id JOIN lembaga l ON l.id = s.lembaga_id
+          WHERE s.lembaga_id IN (${p}) AND t.jatuh_tempo < ? GROUP BY l.id HAVING jumlah > 0 ORDER BY jumlah DESC`).all(...ids, today),
+        pembayaran_per_lembaga: db.prepare(`SELECT l.kode, COALESCE(SUM(p.jumlah), 0) jumlah FROM pembayaran p JOIN siswa s ON s.id = p.siswa_id JOIN lembaga l ON l.id = s.lembaga_id
+          WHERE substr(p.tanggal, 1, 7) = ? AND s.lembaga_id IN (${p}) GROUP BY l.id ORDER BY jumlah DESC`).all(bulan, ...ids),
+        pembayaran_per_bulan: db.prepare(`SELECT substr(p.tanggal, 1, 7) bulan, SUM(p.jumlah) jumlah FROM pembayaran p JOIN siswa s ON s.id = p.siswa_id
+          WHERE substr(p.tanggal, 1, 7) >= ? AND s.lembaga_id IN (${p}) GROUP BY 1 ORDER BY 1`).all(awal, ...ids),
+      });
+    }
+    return out;
   }
 
   // ---- cetak massal: siswa satu kelas / satu siswa ----
@@ -1139,7 +1158,7 @@ function createApp(dbFile, opts = {}) {
     const roleOk = (r) => (me.role === 'yayasan' ? ROLES.includes(r) : r === 'staf' || r === 'guru');
     const nomorWa = (v) => { if (v === undefined) return undefined; const n = waNorm(v); if (String(v).trim() && (n.length < 10 || n.length > 15)) throw new HttpError(400, 'Nomor WhatsApp tidak valid'); return n || null; };
     const parseIds = (role, v) => {
-      if (role === 'yayasan') return [];
+      if (SEMUA_LEMBAGA.has(role)) return [];
       const arr = [...new Set((Array.isArray(v) ? v : []).map(Number))];
       if (!arr.length) throw new HttpError(400, 'Pilih minimal satu lembaga');
       if (arr.some((i) => !myIds.includes(i))) throw new HttpError(403, 'Lembaga tidak diizinkan');
@@ -1156,7 +1175,7 @@ function createApp(dbFile, opts = {}) {
     if (method === 'GET') {
       return db.prepare("SELECT id, username, nama, role, wa FROM users WHERE role NOT IN ('wali', 'siswa') ORDER BY username").all()
         .map((u) => ({ ...u, lembaga_ids: idsOf(u.id) }))
-        .filter((u) => me.role === 'yayasan' || (u.role !== 'yayasan' && u.lembaga_ids.some((i) => myIds.includes(i))));
+        .filter((u) => me.role === 'yayasan' || (!SEMUA_LEMBAGA.has(u.role) && u.role !== 'bendahara' && u.lembaga_ids.some((i) => myIds.includes(i))));
     }
     if (method === 'POST') {
       const { username, nama, role = 'staf' } = body;
@@ -1284,6 +1303,10 @@ function createApp(dbFile, opts = {}) {
 
     // Wali hanya boleh mengakses /api/wali; akun yang wajib ganti password hanya boleh ganti password.
     if (ctx.user.role === 'wali' && !['me', 'logout', 'password', 'wali'].includes(name)) throw new HttpError(403, 'Akses ditolak');
+    const keyEks = (name === 'export' || name === 'pdf') ? parts[1] : null;
+    if (isBendahara(ctx.user.role)) {
+      if (!BENDAHARA_API.has(name) || (BENDAHARA_BACA.has(name) && method !== 'GET') || (keyEks && !KEY_KEUANGAN.has(keyEks))) throw new HttpError(403, 'Akses ditolak: akun bendahara hanya untuk keuangan');
+    } else if (!KEUANGAN.has(ctx.user.role) && (API_KEUANGAN.has(name) || (keyEks && KEY_KEUANGAN.has(keyEks)))) throw new HttpError(403, 'Data keuangan hanya dapat diakses bendahara dan admin yayasan');
     if (ctx.user.role === 'siswa' && !['me', 'logout', 'password', 'belajar'].includes(name)) throw new HttpError(403, 'Akses ditolak');
     if (name === 'belajar' && ctx.user.role !== 'siswa') throw new HttpError(403, 'Hanya untuk akun siswa');
     if (ctx.user.role === 'guru' && (!GURU_API.has(name) || (GURU_BACA_SAJA.has(name) && method !== 'GET'))) throw new HttpError(403, 'Akses ditolak');
@@ -1441,7 +1464,7 @@ function createApp(dbFile, opts = {}) {
     if (RES[name]) {
       const body = method === 'POST' || method === 'PUT' ? await readBody(req) : {};
       const hasil = crud(RES[name], method, id, q, body, ctx);
-      if (ctx.user.role === 'guru' && name === 'siswa') for (const r of Array.isArray(hasil) ? hasil : [hasil]) for (const k of SISWA_SENSITIF) delete r[k];   // data pribadi tidak perlu untuk guru
+      if ((ctx.user.role === 'guru' || isBendahara(ctx.user.role)) && name === 'siswa') for (const r of Array.isArray(hasil) ? hasil : [hasil]) for (const k of SISWA_SENSITIF) delete r[k];   // data pribadi tidak perlu untuk guru
       return send(res, 200, hasil);
     }
     throw new HttpError(404, 'Endpoint tidak ditemukan');
