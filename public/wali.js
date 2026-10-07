@@ -96,8 +96,10 @@ const views = {
   },
   nilai() {
     const n = data.nilai;
-    if (!n.rata.length) return '<div class="empty">Belum ada nilai.</div>';
-    return `<div class="card"><h3>Rata-rata per mata pelajaran</h3>${n.rata.map((r) => `<div style="margin:10px 0"><div class="item" style="border:0;padding:0"><span>${esc(r.mapel)}</span><b>${r.rata}</b></div><div class="bar"><i style="width:${Math.min(100, r.rata)}%"></i></div></div>`).join('')}</div>
+    const kartuRapor = `<div class="card"><h3>Rapor</h3><div class="actions" style="display:flex;gap:8px"><select id="rSem" style="flex:1"><option value="">Semua semester</option><option>Ganjil</option><option>Genap</option></select>
+      <button class="btn" id="rLihat">Lihat</button><button class="btn" id="rPdf">PDF</button></div><div id="rOut"></div></div>`;
+    if (!n.rata.length) return kartuRapor + '<div class="empty">Belum ada nilai.</div>';
+    return kartuRapor + `<div class="card"><h3>Rata-rata per mata pelajaran</h3>${n.rata.map((r) => `<div style="margin:10px 0"><div class="item" style="border:0;padding:0"><span>${esc(r.mapel)}</span><b>${r.rata}</b></div><div class="bar"><i style="width:${Math.min(100, r.rata)}%"></i></div></div>`).join('')}</div>
       <div class="card"><h3>Nilai terbaru</h3>${n.daftar.slice(0, 40).map((x) => `<div class="item"><div>${esc(x.mapel)}<div class="s">${esc(x.jenis || '')} · ${tgl(x.tanggal)} ${x.semester ? '· ' + esc(x.semester) : ''}</div></div><div class="r"><b>${x.nilai}</b></div></div>`).join('')}</div>`;
   },
   absensi() {
@@ -127,10 +129,36 @@ const views = {
   },
 };
 
+function raporHtml(d) {
+  const row = (m, i) => `<div class="item"><div>${i}. ${esc(m.mapel)}<div class="s">KKM ${m.kkm ?? '-'} · rata kelas ${m.kelas_rata ?? '-'}${m.catatan ? ' · ' + esc(m.catatan) : ''}</div></div><div class="r"><b>${m.rata ?? '-'}</b><div class="s">${esc(m.huruf || '')}</div></div></div>`;
+  if (d.format === 'madin') {
+    const m = d.madin; let n = 0;
+    return `<div class="small muted" style="margin:8px 0">${esc(d.siswa.lembaga_nama)} · ${d.semester ? 'Semester ' + esc(d.semester) : 'Semua semester'} · ${esc(m.tahun_ajaran)}</div>
+      ${m.pokok.map((x) => row(x, ++n)).join('')}${m.kecakapan.length ? '<b class="small">Kecakapan</b>' + m.kecakapan.map((x) => row(x, ++n)).join('') : ''}
+      <div class="item"><div><b>Rata-rata</b></div><div class="r"><b>${m.rata ?? '-'}</b></div></div>
+      <b class="small">Kepribadian</b>${m.sikap.map((x, i) => `<div class="item"><div class="s" style="color:inherit">${i + 1}. ${esc(x.teks)}</div><div class="r"><b>${esc(x.nilai || '-')}</b></div></div>`).join('')}
+      <div class="small" style="margin-top:8px">Tidak hadir: sakit ${esc(m.ketidakhadiran.sakit)}, izin ${esc(m.ketidakhadiran.izin)}, tanpa keterangan ${esc(m.ketidakhadiran.alpa)} hari</div>`;
+  }
+  return `<div class="small muted" style="margin:8px 0">${d.semester ? 'Semester ' + esc(d.semester) : 'Semua semester'}</div>${d.nilai.map((x, i) => `<div class="item"><div>${i + 1}. ${esc(x.mapel)}</div><div class="r"><b>${x.rata}</b></div></div>`).join('') || '<div class="empty">Belum ada nilai.</div>'}
+    <div class="small" style="margin-top:8px">Kehadiran: hadir ${d.absensi.h || 0}, sakit ${d.absensi.s || 0}, izin ${d.absensi.i || 0}, alpa ${d.absensi.a || 0}</div>`;
+}
+
 function render() {
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === tab));
   if (!anak.length) { $('#view').innerHTML = tab === 'berita' ? views.berita() : '<div class="empty">Belum ada data anak yang tertaut ke akun ini. Hubungi tata usaha.</div>'; return; }
   $('#view').innerHTML = data ? views[tab]() : '<div class="empty">Memuat…</div>';
+  if ($('#rLihat')) {
+    $('#rLihat').onclick = async () => {
+      try { $('#rOut').innerHTML = raporHtml(await api(`wali/anak/${cur}/rapor?semester=${encodeURIComponent($('#rSem').value)}`)); } catch (e) { toast(e.message, true); }
+    };
+    $('#rPdf').onclick = async () => {
+      try {
+        const r = await fetch(`/api/wali/anak/${cur}/rapor-pdf?semester=${encodeURIComponent($('#rSem').value)}`);
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Gagal mengunduh');
+        const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `rapor-${cur}.pdf`; a.click(); URL.revokeObjectURL(a.href);
+      } catch (e) { toast(e.message, true); }
+    };
+  }
   const ib = $('#install'); if (ib) ib.onclick = async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); };
 }
 
@@ -153,7 +181,7 @@ async function start() {
   try { me = await api('me'); } catch { show('login'); return; }
   if (me.role !== 'wali') {
     await api('logout', { method: 'POST' }).catch(() => {});
-    show('login'); $('#loginErr').textContent = 'Akun ini adalah akun petugas. Gunakan halaman petugas.'; return;
+    show('login'); $('#loginErr').textContent = (me.role === 'siswa' ? 'Ini akun siswa. Gunakan aplikasi Belajar di alamat /siswa.' : 'Akun ini adalah akun petugas. Gunakan halaman petugas.'); return;
   }
   $('#who').textContent = me.nama;
   show('app');

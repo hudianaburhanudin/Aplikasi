@@ -35,6 +35,16 @@ Tanpa dependensi eksternal: Node.js (>= 22.13) + SQLite bawaan Node + frontend H
 - **Jadwal pelajaran** per kelas (baris tanpa kelas = berlaku untuk semua kelas), tampilan tabel hari × jam, **PDF**,
   impor massal CSV, dan tab **Jadwal** di aplikasi wali. Jadwal asli yayasan ada di `data/jadwal/` (MI semua kelas,
   SMK kelas X DKV, SMP kelas VII–IX; kode guru pada PDF sudah diganti nama) - impor lewat Jadwal → *Impor massal*.
+- **Aplikasi Belajar untuk siswa** (`/siswa`, PWA terpisah dari aplikasi wali): siswa hanya melihat **materi**, **ujian online**
+  (harian / UTS / semester) dan nilai ujiannya - tidak ada data keuangan, absensi, atau pelanggaran. Guru/admin membuat ujian
+  (menu *Ujian Online*): soal pilihan ganda (dinilai otomatis) dan uraian (dinilai guru), jendela waktu, durasi per siswa, acak
+  soal & pilihan, satu kali kesempatan, simpan jawaban otomatis, tutup otomatis saat waktu habis, catatan pindah tab. Kunci jawaban
+  tidak pernah dikirim ke siswa dan semua pengecekan waktu dilakukan di server. **Nilai akhir otomatis masuk ke Nilai dan Rapor.**
+  Akun siswa dibuat massal per kelas (menu *Akun Siswa*, password sementara + PDF), materi di menu *Materi Belajar*.
+- **Cetak massal**: rapor satu kelas dalam satu PDF, **kartu pelajar** (dengan barcode NIS/NISN) per kelas atau per siswa.
+- **Rapor di aplikasi wali** (lihat per semester + unduh PDF); kehadiran rapor dihitung per semester (Ganjil Jul-Des, Genap Jan-Jun).
+- **Pengingat tagihan lewat WhatsApp** ke wali (pratinjau dulu, tidak mengulang dalam 7 hari), serta dashboard dengan tren
+  kehadiran, tunggakan per lembaga, dan daftar siswa yang perlu perhatian.
 - **Nilai** dan **Rapor** per siswa. Lembaga berjenjang **Madin** memakai format rapor ASAT (mapel pokok/kecakapan + KKM,
   nilai angka dan huruf, rata-rata kelas, catatan guru, kepribadian, ketidakhadiran, tanda tangan wali kelas & kepala);
   mapel dan KKM diatur di **Mapel Rapor**, sikap/catatan diisi lewat tombol di halaman Rapor. Lembaga lain memakai format umum.

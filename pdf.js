@@ -217,8 +217,8 @@ function jadwalPdf({ lembaga, kelas, tahun, rows, logo }) {
 }
 
 // Rapor format Madin (ASAT): mengikuti contoh rapor madin yayasan
-function raporMadinPdf({ siswa, semester, madin }, logo) {
-  const M = 40, pdf = new Pdf(595, 842), W = pdf.w - 2 * M, size = 9;
+function raporMadinPdf({ siswa, semester, madin }, logo, pdf0) {
+  const M = 40, pdf = pdf0 || new Pdf(595, 842), W = pdf.w - 2 * M, size = 9;
   const lw = pdf.image(logo, M, 24, 56);
   pdf.text(M, 38, 'YAYASAN MIFTAHUL ULUMILLAH', 10, { bold: true, align: 'center', w: W });
   pdf.text(M, 53, (siswa.lembaga_nama || '').toUpperCase(), 13, { bold: true, align: 'center', w: W });
@@ -303,16 +303,74 @@ function raporMadinPdf({ siswa, semester, madin }, logo) {
   y += 62;
   pdf.text(M, y, siswa.wali_kelas || '(................................)', size, { bold: true, align: 'center', w: 190 });
   pdf.text(M + W - 190, y, siswa.kepala_lembaga || '(................................)', size, { bold: true, align: 'center', w: 190 });
+  return pdf0 ? pdf : pdf.build();
+}
+
+
+// Code 39: penanda lebar (n/w) untuk 9 elemen (bar, spasi, bar, ...), cukup untuk NIS/NISN huruf besar dan angka
+const C39 = { '0': 'nnnwwnwnn', '1': 'wnnwnnnnw', '2': 'nnwwnnnnw', '3': 'wnwwnnnnn', '4': 'nnnwwnnnw', '5': 'wnnwwnnnn', '6': 'nnwwwnnnn', '7': 'nnnwnnwnw', '8': 'wnnwnnwnn', '9': 'nnwwnnwnn',
+  A: 'wnnnnwnnw', B: 'nnwnnwnnw', C: 'wnwnnwnnn', D: 'nnnnwwnnw', E: 'wnnnwwnnn', F: 'nnwnwwnnn', G: 'nnnnnwwnw', H: 'wnnnnwwnn', I: 'nnwnnwwnn', J: 'nnnnwwwnn',
+  K: 'wnnnnnnww', L: 'nnwnnnnww', M: 'wnwnnnnwn', N: 'nnnnwnnww', O: 'wnnnwnnwn', P: 'nnwnwnnwn', Q: 'nnnnnnwww', R: 'wnnnnnwwn', S: 'nnwnnnwwn', T: 'nnnnwnwwn',
+  U: 'wwnnnnnnw', V: 'nwwnnnnnw', W: 'wwwnnnnnn', X: 'nwnnwnnnw', Y: 'wwnnwnnnn', Z: 'nwwnwnnnn', '-': 'nwnnnnwnw', '.': 'wwnnnnwnn', ' ': 'nwwnnnwnn', '*': 'nwnnwnwnn' };
+function barcode39(pdf, teks, x, y, w, h) {
+  const kode = ('*' + String(teks).toUpperCase().replace(/[^0-9A-Z.\- ]/g, '') + '*').split('');
+  if (kode.length < 3) return;
+  const unit = kode.length * (6 * 1 + 3 * 2.5 + 1);          // lebar relatif: n=1, w=2.5, celah antar-huruf=1
+  const k = w / unit; let cx = x;
+  for (const ch of kode) {
+    const pat = C39[ch];
+    for (let i = 0; i < 9; i++) {
+      const lebar = (pat[i] === 'w' ? 2.5 : 1) * k;
+      if (i % 2 === 0) pdf.rect(cx, y, lebar, h, 0);
+      cx += lebar;
+    }
+    cx += k;
+  }
+}
+
+// Kartu pelajar (85,6 x 54 mm), 2 kolom x 5 baris per halaman A4. kartu: [{ siswa, tahun }]
+function kartuPdf(list, logoFn) {
+  const cw = 243, ch = 153, gx = 28, gy = 14, mx = (595 - 2 * cw - gx) / 2, my = 24, pdf = new Pdf(595, 842), cache = new Map();
+  list.forEach(({ siswa: s, tahun }, i) => {
+    const pos = i % 10;
+    if (i && !pos) pdf.addPage();
+    const x = mx + (pos % 2) * (cw + gx), y = my + Math.floor(pos / 2) * (ch + gy);
+    const k = s.lembaga_kode;
+    if (!cache.has(k)) cache.set(k, logoFn(k));
+    pdf.rect(x, y, cw, 30, 0.12);
+    pdf.line(x, y, x + cw, y, 0.5, 0.8); pdf.line(x, y + ch, x + cw, y + ch, 0.5, 0.8); pdf.line(x, y, x, y + ch, 0.5, 0.8); pdf.line(x + cw, y, x + cw, y + ch, 0.5, 0.8);
+    const lw = pdf.image(cache.get(k), x + 6, y + 4, 22), tx = x + 6 + (lw ? lw + 6 : 0);
+    pdf.text(tx, y + 13, 'KARTU PELAJAR', 7, { gray: 0.85, bold: true });
+    pdf.text(tx, y + 24, wrap((s.lembaga_nama || '').toUpperCase(), cw - (tx - x) - 6, 8.5, true, 1)[0], 8.5, { bold: true, gray: 1 });
+    pdf.text(x + 10, y + 52, wrap(s.nama, cw - 20, 11, true, 2)[0], 11, { bold: true });
+    const baris = [['NIS', s.nis], ['NISN', s.nisn], ['Kelas', s.kelas_nama], ['TTL', [s.tempat_lahir, s.tgl_lahir && fmtTgl(s.tgl_lahir)].filter(Boolean).join(', ')]];
+    let by = y + 68;
+    for (const [lbl, v] of baris) { if (!v) continue; pdf.text(x + 10, by, lbl, 8, { gray: 0.4 }); pdf.text(x + 44, by, ': ' + wrap(v, cw - 60, 8, false, 1)[0], 8); by += 11; }
+    if (s.nis || s.nisn) barcode39(pdf, s.nis || s.nisn, x + 10, y + ch - 36, 120, 18);
+    pdf.text(x + 10, y + ch - 12, s.nis || s.nisn || '', 7, { gray: 0.4 });
+    pdf.text(x + cw - 100, y + ch - 12, tahun ? 'Tahun ajaran ' + tahun : '', 7, { gray: 0.4, align: 'right', w: 90 });
+  });
+  return pdf.build();
+}
+const fmtTgl = (iso) => { const [y, m, d] = String(iso).split('-').map(Number); return y ? `${d} ${BULAN_NAMA[m - 1]} ${y}` : iso; };
+
+function raporPdf(r, logo, pdf0) {
+  return r.format === 'madin' ? raporMadinPdf(r, logo, pdf0) : raporUmumPdf(r, logo, pdf0);
+}
+// Banyak rapor sekaligus (satu halaman per siswa) dalam satu berkas PDF. logoFn(kodeLembaga) -> Buffer JPEG
+function raporBanyakPdf(list, logoFn) {
+  const pdf = new Pdf(595, 842), cache = new Map();
+  list.forEach((r, i) => {
+    if (i) pdf.addPage();
+    const k = r.siswa.lembaga_kode;
+    if (!cache.has(k)) cache.set(k, logoFn(k));
+    raporPdf(r, cache.get(k), pdf);
+  });
   return pdf.build();
 }
 
-function raporPdf(r, logo) {
-  if (r.format === 'madin') return raporMadinPdf(r, logo);
-  return raporUmumPdf(r, logo);
-}
-
-function raporUmumPdf({ siswa, semester, nilai, absensi }, logo) {
-  const M = 50, pdf = new Pdf(595, 842), W = pdf.w - 2 * M;
+function raporUmumPdf({ siswa, semester, nilai, absensi }, logo, pdf0) {
+  const M = 50, pdf = pdf0 || new Pdf(595, 842), W = pdf.w - 2 * M;
   pdf.image(logo, M, 26, 62);
   pdf.text(M, 40, 'YAYASAN MIFTAHUL ULUMILLAH', 9, { gray: 0.4, align: 'center', w: W });
   pdf.text(M, 56, (siswa.lembaga_nama || '').toUpperCase(), 13, { bold: true, align: 'center', w: W });
@@ -346,7 +404,7 @@ function raporUmumPdf({ siswa, semester, nilai, absensi }, logo) {
   y += 60;
   pdf.text(M, y, siswa.wali_kelas || '(................)', 10, { bold: true, align: 'center', w: 180 });
   pdf.text(M + W - 180, y, siswa.wali || '(................)', 10, { bold: true, align: 'center', w: 180 });
-  return pdf.build();
+  return pdf0 ? pdf : pdf.build();
 }
 
 // Kuitansi pembayaran
@@ -369,4 +427,4 @@ function kuitansiPdf(p, rp, logo) {
   return pdf.build();
 }
 
-module.exports = { tablePdf, raporPdf, kuitansiPdf, jadwalPdf, wrap, width, fmtDate };
+module.exports = { tablePdf, raporPdf, raporBanyakPdf, kartuPdf, kuitansiPdf, jadwalPdf, wrap, width, fmtDate };

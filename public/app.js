@@ -241,7 +241,8 @@ pages.siswa = crudPage({
     { label: 'Impor Excel', run: (load) => imporSiswa(load) },
     { label: '⬇ By Name (EMIS)', run: () => download('export/by-name?' + siswaFilter()) },
     { label: '⬇ Format MBG/SPPG', run: () => download('export/sppg?' + siswaFilter()) },
-    { label: '⬇ Data lengkap', run: () => download('export/siswa-lengkap?' + siswaFilter()) }],
+    { label: '⬇ Data lengkap', run: () => download('export/siswa-lengkap?' + siswaFilter()) },
+    { label: '🪪 Kartu pelajar', run: () => { const k = kelasFilter(); if (!k) return toast('Pilih kelas pada filter dulu', true); download('pdf/kartu?' + qs({ kelas_id: k })); } }],
   fields: [{ section: 'Identitas' },
     { name: 'nama', label: 'Nama lengkap', required: true }, { name: 'jk', label: 'Jenis kelamin', options: JK },
     { name: 'nis', label: 'No. Induk (NIS)' }, { name: 'nisn', label: 'NISN' }, { name: 'nis_lokal', label: 'NIS Lokal (EMIS)' }, { name: 'nik', label: 'NIK siswa' }, { name: 'no_kk', label: 'Nomor KK' },
@@ -337,6 +338,25 @@ pages.tagihan = crudPage({
       { name: 'periode', label: 'Periode', type: 'month', default: today().slice(0, 7) }, { name: 'jumlah', label: 'Jumlah per siswa (Rp)', type: 'number', required: true },
       { name: 'jatuh_tempo', label: 'Jatuh tempo', type: 'date' }], {},
     async (d) => { const r = await api('tagihan/generate', { method: 'POST', body: d }); toast(`${r.dibuat} tagihan dibuat, ${r.dilewati} dilewati (sudah ada)`); reload(); });
+  }) },
+  { label: '💬 Ingatkan wali (WA)', run: guard(async () => {
+    const kelas = kelasFilter(), body = { kelas_id: kelas || undefined };
+    const r = await api('pengingat-tagihan', { method: 'POST', body });
+    const dlg = $('#dlg'), f = $('#dlgForm');
+    dlg.classList.remove('wide');
+    f.innerHTML = `<h3>Pengingat tagihan lewat WhatsApp</h3>
+      <p><b>${r.siswa}</b> wali akan dihubungi untuk <b>${r.tagihan}</b> tagihan lewat jatuh tempo (total <b>${rp(r.total)}</b>).${kelas ? '' : ' Pilih kelas pada filter bila ingin membatasi.'}</p>
+      ${r.sudah_diingatkan ? `<p class="small">${r.sudah_diingatkan} tagihan dilewati karena sudah diingatkan dalam 7 hari terakhir.</p>` : ''}
+      ${r.tanpa_nomor.length ? `<p class="small" style="color:var(--bad)">Tanpa nomor HP (tidak dikirim): ${r.tanpa_nomor.slice(0, 10).map(esc).join(', ')}${r.tanpa_nomor.length > 10 ? '…' : ''}</p>` : ''}
+      ${r.contoh ? `<div class="wa-help" style="white-space:pre-wrap">${esc(r.contoh)}</div>` : '<p class="empty">Tidak ada yang perlu diingatkan.</p>'}
+      <p class="error" id="formErr"></p><div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button>${r.siswa ? '<button type="button" class="btn primary" id="kirimBtn">Kirim sekarang</button>' : ''}</div>`;
+    $('#cancelBtn').onclick = () => dlg.close(); f.onsubmit = (e) => e.preventDefault();
+    if (r.siswa) $('#kirimBtn').onclick = async () => {
+      if (!confirm(`Kirim pesan WhatsApp ke ${r.siswa} wali?`)) return;
+      try { $('#formErr').textContent = 'Mengirim…'; const h = await api('pengingat-tagihan', { method: 'POST', body: { ...body, kirim: true } }); dlg.close(); toast(`${h.terkirim} terkirim, ${h.gagal} gagal`); }
+      catch (err) { $('#formErr').textContent = err.message; }
+    };
+    dlg.showModal();
   }) }],
   fields: [{ name: 'siswa_id', label: 'Siswa', load: optSiswa, required: true, full: true },
     { name: 'jenis', label: 'Jenis', blank: false, default: 'SPP', options: ['SPP', 'Uang Gedung', 'Seragam', 'Kegiatan', 'Lainnya'].map((v) => ({ value: v, label: v })) },
@@ -437,7 +457,12 @@ pages.dashboard = guard(async () => {
       .map(([l, n]) => `<div class="card stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('')}</div>
     <div class="grid2"><div class="card"><b>Absensi hari ini</b><p>Hadir ${a.H || 0} · Sakit ${a.S || 0} · Izin ${a.I || 0} · Alpa ${a.A || 0}</p></div>
     ${d.multi ? `<div class="card"><b>Siswa per lembaga</b><div class="bars">${bars(d.per_lembaga, (r) => r.kode)}</div></div>` : ''}
-    <div class="card"><b>Siswa per kelas</b><div class="bars">${bars(d.per_kelas, (k) => (d.multi ? k.lembaga_kode + ' ' : '') + k.nama)}</div></div></div>`;
+    <div class="card"><b>Siswa per kelas</b><div class="bars">${bars(d.per_kelas, (k) => (d.multi ? k.lembaga_kode + ' ' : '') + k.nama)}</div></div></div>
+    <div class="grid2" style="margin-top:12px"><div class="card"><b>Kehadiran 14 hari terakhir</b>${d.tren_hadir.length ? `<div class="bars">${d.tren_hadir.map((r) => { const pct = Math.round(r.h / r.n * 100);
+      return `<div><span>${esc(r.tanggal.slice(5))}</span><i style="width:${pct}%"></i><span>${pct}%</span></div>`; }).join('')}</div>` : '<p class="empty">Belum ada data absensi.</p>'}</div>
+      <div class="card"><b>Tunggakan per lembaga</b>${d.tunggakan_per_lembaga.length ? `<div class="bars">${d.tunggakan_per_lembaga.map((r) => `<div><span>${esc(r.kode)}</span><i style="width:${r.jumlah / d.tunggakan_per_lembaga[0].jumlah * 100}%"></i><span>${rp(r.jumlah)}</span></div>`).join('')}</div>` : '<p class="empty">Tidak ada tunggakan.</p>'}</div></div>
+    <div class="card" style="margin-top:12px"><b>Perlu perhatian</b><p class="empty" style="text-align:left;padding:2px 0 8px">Poin pelanggaran ≥ 50 atau alpa ≥ 3 kali dalam 30 hari terakhir.</p>
+      ${d.berisiko.length ? `<div class="tablewrap"><table><thead><tr><th>Siswa</th><th>Kelas</th><th>Poin</th><th>Alpa 30 hari</th></tr></thead><tbody>${d.berisiko.map((r) => `<tr><td>${esc(r.nama)}</td><td>${esc((d.multi ? r.lembaga_kode + ' ' : '') + (r.kelas_nama || ''))}</td><td>${r.poin}</td><td>${r.alpa}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Tidak ada.</p>'}</div>`;
 });
 
 // ---- absensi ----
@@ -540,6 +565,161 @@ pages.mapelrapor = crudPage({
     { name: 'kkm', label: 'KKM', type: 'number', step: '0.01' }, { name: 'urut', label: 'Urutan', type: 'number', default: 0 }],
 });
 
+// ---- aplikasi belajar siswa: materi, ujian online, akun siswa ----
+const JENIS_UJIAN = { harian: 'Ulangan Harian', uts: 'UTS', semester: 'Ujian Semester' };
+const fmtWaktu = (w) => String(w || '').replace('T', ' ');
+pages.materi = crudPage({
+  key: 'materi', title: 'Materi Belajar', single: 'Materi', noExport: true,
+  note: '<p class="empty" style="text-align:left">Materi tampil di aplikasi <b>Belajar</b> milik siswa (alamat <code>/siswa</code>). Kosongkan kelas agar materi tampil untuk semua kelas di lembaga.</p>',
+  filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }],
+  columns: [{ key: 'judul', label: 'Judul' }, { key: 'mapel', label: 'Mapel' }, { label: 'Kelas', render: (r) => esc(r.kelas_nama || 'Semua kelas') }, { key: 'dibuat_oleh', label: 'Oleh' }],
+  fields: [{ name: 'judul', label: 'Judul materi', required: true, full: true }, { name: 'kelas_id', label: 'Kelas (kosong = semua)', load: optKelas }, { name: 'mapel', label: 'Mata pelajaran' },
+    { name: 'isi', label: 'Isi materi (teks)', type: 'textarea', rows: 8, full: true }, { name: 'tautan', label: 'Tautan (video/dokumen, diawali https://)', full: true }],
+});
+async function postBlob(path, body, nama) {
+  try {
+    const r = await fetch('/api/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lembaga': String(scope) }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Gagal membuat berkas');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = nama; a.click(); URL.revokeObjectURL(a.href);
+  } catch (e) { toast(e.message, true); }
+}
+pages.akunsiswa = guard(async () => {
+  const kelas = await optKelas();
+  $('#main').innerHTML = `<h2>Akun Siswa (Aplikasi Belajar)</h2><div class="bar"><select id="k">${kelas.map((k) => `<option value="${k.value}">${esc(k.label)}</option>`).join('')}</select>
+    <span class="grow"></span><button class="btn primary" id="buat">Buat akun untuk yang belum punya</button></div><div class="tablewrap" id="tbl"></div>
+    <p class="empty" style="text-align:left">Siswa masuk di alamat <code>${esc(location.origin)}/siswa</code> dengan username dan password di bawah; password sementara wajib diganti saat masuk pertama. Password hanya tampil sekali saat dibuat atau diatur ulang — unduh PDF-nya lalu bagikan ke siswa. Akun siswa dihapus otomatis bila data siswa dihapus, dan tidak bisa masuk bila statusnya bukan aktif.</p>`;
+  const load = guard(async () => {
+    if (!$('#k').value) { $('#tbl').innerHTML = '<div class="empty">Buat kelas terlebih dahulu.</div>'; return; }
+    const rows = await api('siswa-akun?' + qs({ kelas_id: $('#k').value }));
+    $('#tbl').innerHTML = rows.length ? `<table><thead><tr><th>NIS</th><th>Nama</th><th>Username</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.nis)}</td><td>${esc(r.nama)}</td><td>${r.username ? esc(r.username) : '<span class="badge">belum ada</span>'}</td>
+      <td>${r.username ? (r.must_change ? 'belum ganti password' : 'aktif') : ''}</td><td class="act">${r.username ? `<button class="btn small" data-r="${r.siswa_id}">Atur ulang password</button>` : `<button class="btn small" data-n="${r.siswa_id}">Buat akun</button>`}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Tidak ada siswa aktif.</div>';
+  });
+  const tampilAkun = (r) => {
+    if (!r.akun.length) return toast(`Tidak ada akun baru (${r.dilewati} sudah punya akun)`);
+    const rows = r.akun.map((a) => [a.nama, a.kelas || '', a.username, a.password]);
+    showInfo('Akun siswa dibuat', `<p class="small">Catat atau unduh sekarang — password <b>tidak dapat dilihat lagi</b>.</p><div class="tablewrap"><table><thead><tr><th>Nama</th><th>Username</th><th>Password sementara</th></tr></thead><tbody>${r.akun.map((a) => `<tr><td>${esc(a.nama)}</td><td>${esc(a.username)}</td><td><code>${esc(a.password)}</code></td></tr>`).join('')}</tbody></table></div>
+      <div class="bar"><button type="button" class="btn primary" id="akunPdf">⬇ Unduh PDF</button></div>`, true);
+    $('#akunPdf').onclick = () => postBlob('akun-pdf', { rows }, 'akun-siswa.pdf');
+  };
+  $('#buat').onclick = guard(async () => { const r = await api('siswa-akun', { method: 'POST', body: { kelas_id: $('#k').value } }); tampilAkun(r); load(); });
+  $('#tbl').onclick = guard(async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.r && !confirm('Atur ulang password siswa ini? Password lama tidak berlaku lagi.')) return;
+    const r = await api('siswa-akun', { method: 'POST', body: { siswa_id: Number(b.dataset.r || b.dataset.n), reset: !!b.dataset.r } }); tampilAkun(r); load();
+  });
+  $('#k').onchange = load; load();
+});
+
+// Format tempel: "1. Soal?" lalu pilihan "A. ..." (beri * di depan pilihan yang benar, atau baris "Kunci: B"); tanpa pilihan = uraian
+function parseSoal(teks) {
+  const hasil = []; let cur = null;
+  const tutup = () => { if (cur && cur.teks.trim()) { cur.teks = cur.teks.trim(); if (cur.opsi.length >= 2) { cur.tipe = 'pg'; if (cur.kunci < 0) cur.kunci = 0; } else { cur.tipe = 'uraian'; cur.opsi = []; cur.kunci = null; } hasil.push(cur); } cur = null; };
+  for (const raw of String(teks).split(/\r?\n/)) {
+    const ln = raw.trim(); if (!ln) continue;
+    let m;
+    if ((m = /^\d+[.)]\s*(.*)$/.exec(ln))) { tutup(); cur = { teks: m[1], opsi: [], kunci: -1, bobot: 1 }; }
+    else if (cur && (m = /^(\*?)\s*([A-Fa-f])[.)]\s*(.*)$/.exec(ln))) { cur.opsi.push(m[3]); if (m[1]) cur.kunci = cur.opsi.length - 1; }
+    else if (cur && (m = /^kunci\s*[:=]\s*([A-Fa-f])/i.exec(ln))) cur.kunci = m[1].toUpperCase().charCodeAt(0) - 65;
+    else if (cur && !cur.opsi.length) cur.teks += '\n' + ln;
+    else if (!cur) cur = { teks: ln, opsi: [], kunci: -1, bobot: 1 };
+  }
+  tutup(); return hasil;
+}
+const editorSoal = guard(async (u, reload) => {
+  const d = await api('ujian-soal?ujian_id=' + u.id);
+  let list = d.soal.map((s) => ({ tipe: s.tipe, teks: s.teks, opsi: s.opsi || ['', ''], kunci: s.kunci ?? 0, bobot: s.bobot }));
+  const dlg = $('#dlg'), f = $('#dlgForm');
+  const baca = () => { f.querySelectorAll('[data-s]').forEach((el) => {
+    const i = Number(el.dataset.s), s = list[i]; if (!s) return;
+    s.teks = el.querySelector('[name=teks]').value; s.bobot = Number(el.querySelector('[name=bobot]').value) || 1;
+    if (s.tipe === 'pg') { s.opsi = [...el.querySelectorAll('[name=opsi]')].map((x) => x.value); const k = el.querySelector('[name^=kunci]:checked'); s.kunci = k ? Number(k.value) : 0; }
+  }); };
+  const gambar = () => {
+    dlg.classList.add('wide');
+    f.innerHTML = `<h3>Soal · ${esc(u.judul)} <span class="small muted">(${list.length} soal)</span></h3>
+      ${d.terkunci ? '<p class="error">Soal terkunci karena sudah ada siswa yang mengerjakan.</p>' : ''}
+      <div style="display:grid;gap:10px;max-height:56vh;overflow:auto">${list.map((s, i) => `<div class="card" data-s="${i}"><div class="bar"><b>${i + 1}.</b><span class="badge">${s.tipe === 'pg' ? 'Pilihan ganda' : 'Uraian'}</span><span class="grow"></span>
+        <label style="display:flex;gap:4px;align-items:center">Bobot <input name="bobot" type="number" step="0.5" min="0.5" value="${esc(s.bobot)}" style="width:70px"></label><button type="button" class="btn small danger" data-del="${i}" ${d.terkunci ? 'disabled' : ''}>Hapus</button></div>
+        <textarea name="teks" rows="2" placeholder="Tulis soal…" ${d.terkunci ? 'disabled' : ''}>${esc(s.teks)}</textarea>
+        ${s.tipe === 'pg' ? `<div style="display:grid;gap:6px;margin-top:6px">${s.opsi.map((o, k) => `<label style="display:flex;gap:6px;align-items:center;color:inherit"><input type="radio" name="kunci${i}" value="${k}" ${s.kunci === k ? 'checked' : ''} style="width:auto" ${d.terkunci ? 'disabled' : ''}>
+          <b>${'ABCDEF'[k]}</b><input name="opsi" value="${esc(o)}" placeholder="Pilihan ${'ABCDEF'[k]}" ${d.terkunci ? 'disabled' : ''}></label>`).join('')}
+          ${s.opsi.length < 6 && !d.terkunci ? `<button type="button" class="btn small" data-add="${i}">+ pilihan</button>` : ''}<span class="small muted">Pilih bulatan di sebelah pilihan yang benar.</span></div>` : '<p class="small muted">Dinilai manual oleh guru.</p>'}</div>`).join('') || '<div class="empty">Belum ada soal.</div>'}</div>
+      <div class="bar">${d.terkunci ? '' : '<button type="button" class="btn" id="addPg">+ Pilihan ganda</button><button type="button" class="btn" id="addUr">+ Uraian</button><button type="button" class="btn" id="tempel">Tempel banyak soal</button>'}</div>
+      <p class="error" id="formErr"></p><div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button>${d.terkunci ? '' : '<button type="button" class="btn primary" id="simpanSoal">Simpan soal</button>'}</div>`;
+    $('#cancelBtn').onclick = () => dlg.close(); f.onsubmit = (e) => e.preventDefault();
+    if (d.terkunci) return;
+    f.querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => { baca(); list.splice(Number(b.dataset.del), 1); gambar(); }; });
+    f.querySelectorAll('[data-add]').forEach((b) => { b.onclick = () => { baca(); list[Number(b.dataset.add)].opsi.push(''); gambar(); }; });
+    $('#addPg').onclick = () => { baca(); list.push({ tipe: 'pg', teks: '', opsi: ['', '', '', ''], kunci: 0, bobot: 1 }); gambar(); };
+    $('#addUr').onclick = () => { baca(); list.push({ tipe: 'uraian', teks: '', opsi: [], kunci: null, bobot: 2 }); gambar(); };
+    $('#tempel').onclick = () => {
+      f.innerHTML = `<h3>Tempel banyak soal</h3><p class="small muted">Satu soal per nomor. Pilihan ditulis A. B. C. D.; beri tanda <b>*</b> di depan pilihan yang benar (atau baris <b>Kunci: B</b>). Soal tanpa pilihan menjadi soal uraian.</p>
+        <textarea id="tmp" rows="12" placeholder="1. Ibu kota Indonesia adalah…\nA. Bandung\n*B. Jakarta\nC. Surabaya\n\n2. Jelaskan pengertian pecahan."></textarea><div class="actions"><button type="button" class="btn" id="tBatal">Kembali</button><button type="button" class="btn primary" id="tOk">Tambahkan</button></div>`;
+      $('#tBatal').onclick = gambar;
+      $('#tOk').onclick = () => { const n = parseSoal($('#tmp').value); if (!n.length) return toast('Format soal tidak terbaca', true); list.push(...n); gambar(); toast(`${n.length} soal ditambahkan`); };
+    };
+    $('#simpanSoal').onclick = guard(async () => {
+      baca();
+      try { await api('ujian-soal', { method: 'PUT', body: { ujian_id: u.id, soal: list } }); toast('Soal tersimpan'); dlg.close(); reload(); }
+      catch (e) { $('#formErr').textContent = e.message; }
+    });
+  };
+  gambar(); dlg.showModal();
+});
+const hasilUjian = guard(async (u) => {
+  const dlg = $('#dlg'), f = $('#dlgForm');
+  const daftar = guard(async () => {
+    const h = await api('ujian-hasil?ujian_id=' + u.id), r = h.ringkas;
+    dlg.classList.add('wide');
+    f.innerHTML = `<h3>Hasil · ${esc(u.judul)}</h3><p class="small">${esc(u.kelas_nama)} · ${esc(u.mapel)} · ${h.jumlah_soal} soal · ${fmtWaktu(u.mulai)} s.d. ${fmtWaktu(u.selesai)}</p>
+      <div class="tiles" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">${[['Mengerjakan', `${r.mengerjakan}/${r.siswa}`], ['Selesai', r.selesai], ['Rata-rata', r.rata ?? '-'], ['Tertinggi / terendah', r.tertinggi === null ? '-' : `${r.tertinggi} / ${r.terendah}`]].map(([l, n]) => `<div class="card stat"><div class="n" style="font-size:20px">${n}</div><div class="l">${l}</div></div>`).join('')}</div>
+      ${r.menunggu_nilai ? `<p class="error">${r.menunggu_nilai} jawaban uraian menunggu dinilai.</p>` : ''}
+      <div class="tablewrap" style="max-height:48vh;overflow:auto"><table><thead><tr><th>Nama</th><th>Status</th><th>Nilai</th><th>Pindah tab</th><th></th></tr></thead><tbody>${h.peserta.map((p) => `<tr><td>${esc(p.nama)}</td>
+        <td>${p.status === 'selesai' ? (p.nilai === null ? '<span class="badge">perlu dinilai</span>' : 'selesai') : p.status === 'berjalan' ? 'sedang mengerjakan' : '<span class="muted">belum</span>'}</td><td><b>${p.nilai ?? ''}</b></td><td>${p.pindah_tab ?? ''}</td>
+        <td class="act">${p.peserta_id ? `<button class="btn small" data-p="${p.peserta_id}">Periksa</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+      <div class="actions"><button type="button" class="btn" id="xlsH">⬇ Excel</button><button type="button" class="btn primary" id="cancelBtn">Tutup</button></div>`;
+    $('#cancelBtn').onclick = () => dlg.close(); f.onsubmit = (e) => e.preventDefault();
+    $('#xlsH').onclick = () => download('export/ujian-hasil?ujian_id=' + u.id);
+    f.querySelectorAll('[data-p]').forEach((b) => { b.onclick = () => periksa(Number(b.dataset.p)); });
+  });
+  const periksa = guard(async (pid) => {
+    const d = await api('ujian-hasil/' + pid);
+    f.innerHTML = `<h3>${esc(d.siswa)} · nilai ${d.nilai ?? 'belum lengkap'}</h3><p class="small">Pindah tab/aplikasi selama ujian: <b>${d.pindah_tab}</b> kali</p>
+      <div style="max-height:56vh;overflow:auto;display:grid;gap:8px">${d.soal.map((s) => `<div class="card"><b>${s.urut}.</b> <span style="white-space:pre-wrap">${esc(s.teks)}</span>
+        ${s.tipe === 'pg' ? `<div class="small" style="margin-top:6px">${s.opsi.map((o, k) => `<div>${k === s.kunci ? '✅' : k === s.jawaban ? '❌' : '▫️'} ${'ABCDEF'[k]}. ${esc(o)}${k === s.jawaban ? ' <b>(dijawab)</b>' : ''}</div>`).join('')}</div>
+          <div class="small muted">Skor ${s.skor ?? 0} / ${s.bobot}</div>`
+        : `<div class="card" style="background:var(--bg);white-space:pre-wrap;margin:6px 0">${s.jawaban === null ? '<i class="muted">Tidak dijawab</i>' : esc(s.jawaban)}</div>
+          <label style="display:flex;gap:6px;align-items:center;color:inherit">Skor (0–${s.bobot}) <input type="number" step="0.5" min="0" max="${s.bobot}" data-skor="${s.id}" value="${s.skor ?? ''}" style="width:90px"></label>`}</div>`).join('')}</div>
+      <p class="error" id="formErr"></p><div class="actions"><button type="button" class="btn" id="kembali">Kembali</button>${d.soal.some((s) => s.tipe === 'uraian') ? '<button type="button" class="btn primary" id="simpanSkor">Simpan skor uraian</button>' : ''}</div>`;
+    $('#kembali').onclick = daftar;
+    if ($('#simpanSkor')) $('#simpanSkor').onclick = async () => {
+      const skor = {}; f.querySelectorAll('[data-skor]').forEach((i) => { if (i.value !== '') skor[i.dataset.skor] = Number(i.value); });
+      try { const r = await api('ujian-hasil/' + pid, { method: 'PUT', body: { skor } }); toast(r.menunggu ? 'Skor tersimpan (masih ada uraian yang belum dinilai)' : `Nilai akhir ${r.nilai} masuk ke daftar nilai`); periksa(pid); }
+      catch (e) { $('#formErr').textContent = e.message; }
+    };
+  });
+  await daftar(); dlg.showModal();
+});
+pages.ujian = crudPage({
+  key: 'ujian', title: 'Ujian Online', single: 'Ujian', noExport: true,
+  note: '<p class="empty" style="text-align:left">Alur: <b>Tambah</b> ujian (status Draf) → <b>Soal</b> (pilihan ganda dinilai otomatis, uraian dinilai guru) → ubah status ke <b>Terbit</b>. Siswa mengerjakan di aplikasi <b>Belajar</b> (<code>/siswa</code>) pada rentang waktu yang ditentukan, satu kali, dengan batas durasi. Nilai akhir otomatis masuk ke menu Nilai dan Rapor (Ulangan Harian / UTS / UAS).</p>',
+  filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }, { key: 'jenis', label: 'Semua jenis', load: async () => Object.entries(JENIS_UJIAN).map(([v, label]) => ({ value: v, label })) }],
+  columns: [{ key: 'judul', label: 'Judul' }, { key: 'mapel', label: 'Mapel' }, { key: 'kelas_nama', label: 'Kelas' }, { label: 'Jenis', render: (r) => esc(JENIS_UJIAN[r.jenis] || r.jenis) },
+    { label: 'Waktu (WIB)', render: (r) => `${esc(fmtWaktu(r.mulai))}<br><span class="small muted">s.d. ${esc(fmtWaktu(r.selesai))} · ${r.durasi} mnt</span>` },
+    { label: 'Soal', render: (r) => r.jumlah_soal }, { label: 'Peserta', render: (r) => r.peserta },
+    { label: 'Status', render: (r) => (r.status === 'terbit' ? '<span class="badge">terbit</span>' : 'draf') }],
+  rowActions: [{ name: 'soal', label: 'Soal', run: (r, load) => editorSoal(r, load) }, { name: 'hasil', label: 'Hasil', run: (r) => hasilUjian(r) }],
+  fields: [{ name: 'judul', label: 'Judul ujian', required: true, full: true }, { name: 'kelas_id', label: 'Kelas', load: optKelas, required: true }, { name: 'mapel', label: 'Mata pelajaran', required: true },
+    { name: 'jenis', label: 'Jenis', blank: false, default: 'harian', options: Object.entries(JENIS_UJIAN).map(([value, label]) => ({ value, label })) },
+    { name: 'semester', label: 'Semester', options: ['Ganjil', 'Genap'].map((v) => ({ value: v, label: v })) },
+    { name: 'mulai', label: 'Dibuka (WIB)', type: 'datetime-local', required: true }, { name: 'selesai', label: 'Ditutup (WIB)', type: 'datetime-local', required: true },
+    { name: 'durasi', label: 'Durasi per siswa (menit)', type: 'number', default: 60, required: true },
+    { name: 'acak', label: 'Acak urutan soal & pilihan', blank: false, default: 1, options: [{ value: 1, label: 'Ya' }, { value: 0, label: 'Tidak' }] },
+    { name: 'tampil_nilai', label: 'Siswa melihat nilai setelah selesai', blank: false, default: 1, options: [{ value: 1, label: 'Ya' }, { value: 0, label: 'Tidak (guru yang membagikan)' }] },
+    { name: 'status', label: 'Status', blank: false, default: 'draft', options: [{ value: 'draft', label: 'Draf (siswa belum melihat)' }, { value: 'terbit', label: 'Terbit' }] },
+    { name: 'petunjuk', label: 'Petunjuk pengerjaan (opsional)', type: 'textarea', full: true }],
+});
+
 // ---- rapor ----
 pages.rapor = guard(async () => {
   const siswa = await optSiswa();
@@ -547,7 +727,7 @@ pages.rapor = guard(async () => {
     <select id="s">${siswa.map((s) => `<option value="${s.value}">${esc(s.label)}</option>`).join('')}</select>
     <select id="sem"><option value="">Semua semester</option><option>Ganjil</option><option>Genap</option></select>
     <button class="btn" id="raporEdit" style="display:none">✎ Isi sikap & catatan</button>
-    <button class="btn" id="raporPdf">⬇ PDF</button><button class="btn" id="printBtn">🖨 Cetak</button></div><div id="out"></div>`;
+    <button class="btn" id="raporPdf">⬇ PDF</button><button class="btn" id="raporKelas" title="Satu PDF berisi rapor semua siswa aktif di kelas ini">⬇ PDF satu kelas</button><button class="btn" id="kartuBtn">🪪 Kartu pelajar</button><button class="btn" id="printBtn">🖨 Cetak</button></div><div id="out"></div>`;
   let last = null;
   const load = guard(async () => {
     $('#raporEdit').style.display = 'none';
@@ -595,6 +775,8 @@ pages.rapor = guard(async () => {
       toast('Tersimpan'); load();
     });
   });
+  $('#raporKelas').onclick = () => last && last.siswa.kelas_id ? download('pdf/rapor-kelas?' + qs({ kelas_id: last.siswa.kelas_id, semester: $('#sem').value })) : toast('Siswa ini belum punya kelas', true);
+  $('#kartuBtn').onclick = () => $('#s').value && download('pdf/kartu?' + qs({ siswa_id: $('#s').value }));
   $('#printBtn').onclick = () => window.print();
   $('#raporPdf').onclick = () => $('#s').value && download('pdf/rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
   $('#s').onchange = $('#sem').onchange = load; load();
@@ -729,7 +911,7 @@ pages.audit = guard(async () => {
 // ---- shell ----
 const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'], GURU = ['yayasan', 'admin', 'staf', 'guru'];
 const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', GURU], ['pelanggaran', 'Pelanggaran', GURU],
-  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['ujian', 'Ujian Online', GURU], ['materi', 'Materi Belajar', GURU], ['akunsiswa', 'Akun Siswa', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
   ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']], ['audit', 'Jejak Audit', ['yayasan']]];
 
 function route() {

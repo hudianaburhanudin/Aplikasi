@@ -167,6 +167,32 @@ const MIGRATIONS = [
    ALTER TABLE lembaga ADD COLUMN npsn TEXT;
    UPDATE lembaga SET nsm = '111235220242', npsn = '69854240' WHERE kode = 'MI';
    UPDATE lembaga SET nsm = '101235220248' WHERE kode = 'RA';`,
+  // v10: riwayat pengingat tagihan (mencegah pesan berulang)
+  `CREATE TABLE pengingat_log (id INTEGER PRIMARY KEY, tagihan_id INTEGER NOT NULL, siswa_id INTEGER, nomor TEXT, waktu TEXT NOT NULL DEFAULT (datetime('now')), berhasil INTEGER NOT NULL DEFAULT 0);
+   CREATE INDEX idx_pengingat ON pengingat_log(tagihan_id, waktu);`,
+  // v11: aplikasi belajar siswa - akun siswa, materi, ujian (harian/UTS/semester), soal, dan pengerjaan
+  `CREATE TABLE siswa_user (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, siswa_id INTEGER NOT NULL UNIQUE REFERENCES siswa(id) ON DELETE CASCADE);
+   CREATE TABLE materi (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id), kelas_id INTEGER REFERENCES kelas(id) ON DELETE CASCADE,
+     mapel TEXT, judul TEXT NOT NULL, isi TEXT, tautan TEXT, dibuat_oleh TEXT, dibuat TEXT NOT NULL DEFAULT (datetime('now')));
+   CREATE INDEX idx_materi ON materi(lembaga_id, kelas_id);
+   CREATE TABLE ujian (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id), kelas_id INTEGER NOT NULL REFERENCES kelas(id) ON DELETE CASCADE,
+     mapel TEXT NOT NULL, judul TEXT NOT NULL, jenis TEXT NOT NULL DEFAULT 'harian', semester TEXT,
+     mulai TEXT NOT NULL, selesai TEXT NOT NULL, durasi INTEGER NOT NULL DEFAULT 60,
+     acak INTEGER NOT NULL DEFAULT 1, tampil_nilai INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'draft',
+     petunjuk TEXT, dibuat_oleh TEXT, dibuat TEXT NOT NULL DEFAULT (datetime('now')));
+   CREATE INDEX idx_ujian ON ujian(kelas_id, status);
+   CREATE TABLE soal (
+     id INTEGER PRIMARY KEY, ujian_id INTEGER NOT NULL REFERENCES ujian(id) ON DELETE CASCADE, urut INTEGER NOT NULL,
+     tipe TEXT NOT NULL, teks TEXT NOT NULL, opsi TEXT, kunci INTEGER, bobot REAL NOT NULL DEFAULT 1);
+   CREATE INDEX idx_soal ON soal(ujian_id, urut);
+   CREATE TABLE ujian_peserta (
+     id INTEGER PRIMARY KEY, ujian_id INTEGER NOT NULL REFERENCES ujian(id) ON DELETE CASCADE, siswa_id INTEGER NOT NULL REFERENCES siswa(id) ON DELETE CASCADE,
+     mulai_at INTEGER NOT NULL, batas INTEGER NOT NULL, selesai_at INTEGER,
+     jawaban TEXT NOT NULL DEFAULT '{}', skor TEXT NOT NULL DEFAULT '{}', nilai REAL, status TEXT NOT NULL DEFAULT 'berjalan',
+     pindah_tab INTEGER NOT NULL DEFAULT 0, nilai_id INTEGER, UNIQUE (ujian_id, siswa_id));
+   CREATE INDEX idx_peserta_status ON ujian_peserta(status, batas);`,
 ];
 
 function migrate(db) {

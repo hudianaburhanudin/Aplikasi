@@ -22,4 +22,14 @@ function backupNow(db, dir, simpan = 14, sekarang = new Date()) {
   return { file, dihapus: hapus };
 }
 
-module.exports = { backupNow, backupTerakhir, daftar };
+// Salinan ke luar server (Google Drive, S3, dll.) lewat rclone bila BACKUP_RCLONE_REMOTE diatur, mis. "gdrive:backup-sekolah".
+// Berjalan di latar belakang; kegagalan hanya dicatat, tidak menghentikan server.
+function salinKeLuar(file, remote = process.env.BACKUP_RCLONE_REMOTE) {
+  if (!remote) return false;
+  require('child_process').execFile(process.env.RCLONE_BIN || 'rclone', ['copy', file, remote, '--immutable'], { timeout: 10 * 60e3 }, (err) => {
+    if (err) console.error('Salinan backup ke luar server gagal:', err.message); else console.log('Backup disalin ke', remote);
+  });
+  return true;
+}
+
+module.exports = { backupNow, backupTerakhir, daftar, salinKeLuar };

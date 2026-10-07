@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const { createApp } = require('./server');
 
 async function boot(t, opts) {
-  const { server } = createApp(':memory:', opts);
+  const { server, db } = createApp(':memory:', opts);
   await new Promise((r) => server.listen(0, r));
   t.after(() => server.close());
   const base = `http://localhost:${server.address().port}/api/`;
@@ -19,7 +19,7 @@ async function boot(t, opts) {
       return { status: r.status, r, data: type.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) };
     };
   };
-  return { client, base };
+  return { client, base, db };
 }
 const tgl = new Date().toISOString().slice(0, 10);
 
@@ -949,4 +949,276 @@ test('impor siswa dari Excel: By Name EMIS & Dapodik, pembaruan tanpa duplikat, 
   const gs = (await guru('siswa?q=Abryzam')).data[0];
   assert.strictEqual(gs.nama, 'Abryzam Gaffar Alkalif');
   for (const k of ['nik', 'no_kk', 'nik_ayah', 'nik_ibu', 'alamat', 'desa', 'kip_kemenag']) assert.ok(!(k in gs), k + ' tidak boleh terlihat guru');
+});
+
+test('cetak massal rapor & kartu pelajar, rapor untuk wali, kehadiran per semester, dashboard', async (t) => {
+  const { client } = await boot(t);
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [MADIN, SMP] = [id('MADIN-ULA'), id('SMP')];
+  const halaman = (buf) => (buf.toString('latin1').match(/\/Type \/Page /g) || []).length;
+
+  const kelas = (await yys('kelas', 'POST', { nama: '3' }, MADIN)).data.id;
+  const sis = [];
+  for (const [n, nis] of [['Andin', '101'], ['Budi', '102'], ['Citra', '103']]) sis.push((await yys('siswa', 'POST', { nama: n, nis, nisn: '99' + nis, kelas_id: kelas, telepon: '0813000000' + nis.slice(1) }, MADIN)).data.id);
+  await yys('mapel_rapor', 'POST', { nama: 'Fiqih', kkm: 70 }, MADIN);
+  for (const sid of sis) await yys('nilai', 'POST', { siswa_id: sid, mapel: 'Fiqih', nilai: 80, semester: 'Ganjil' });
+
+  // kehadiran per semester mengikuti tahun ajaran aktif (2026/2027: Ganjil = Jul-Des 2026, Genap = Jan-Jun 2027)
+  const a = sis[0];
+  const ab = (tanggal, status) => yys('absensi', 'POST', { tanggal, items: [{ siswa_id: a, status }] }, MADIN);
+  await ab('2026-09-10', 'S'); await ab('2026-10-01', 'A'); await ab('2027-02-03', 'I');
+  const gj = (await yys(`rapor?siswa_id=${a}&semester=Ganjil`)).data, gn = (await yys(`rapor?siswa_id=${a}&semester=Genap`)).data, semua = (await yys(`rapor?siswa_id=${a}`)).data;
+  assert.deepStrictEqual([gj.absensi.s, gj.absensi.a, gj.absensi.i], [1, 1, 0]);
+  assert.deepStrictEqual([gn.absensi.s, gn.absensi.a, gn.absensi.i], [0, 0, 1]);
+  assert.deepStrictEqual([semua.absensi.s, semua.absensi.a, semua.absensi.i], [1, 1, 1]);
+  assert.deepStrictEqual(gj.madin.ketidakhadiran, { sakit: '1', izin: '0', alpa: '1' });
+
+  // cetak massal: satu halaman per siswa; kartu 10 per halaman
+  const rk = await yys(`pdf/rapor-kelas?kelas_id=${kelas}&semester=Ganjil`);
+  assert.strictEqual(rk.status, 200); assert.strictEqual(rk.data.subarray(0, 5).toString(), '%PDF-'); assert.strictEqual(halaman(rk.data), 3);
+  const kp = await yys(`pdf/kartu?kelas_id=${kelas}`);
+  assert.strictEqual(kp.status, 200); assert.strictEqual(halaman(kp.data), 1);
+  assert.strictEqual((await yys(`pdf/kartu?siswa_id=${a}`)).status, 200);
+  assert.strictEqual((await yys('pdf/kartu')).status, 400);
+  const kosong = (await yys('kelas', 'POST', { nama: 'kosong' }, MADIN)).data.id;
+  assert.strictEqual((await yys(`pdf/rapor-kelas?kelas_id=${kosong}`)).status, 404);
+  const kSMP = (await yys('kelas', 'POST', { nama: 'VII' }, SMP)).data.id;
+  await yys('users', 'POST', { username: 'adminsmp', password: 'rahasia123', nama: 'A', role: 'admin', lembaga_ids: [SMP] });
+  const asmp = client();
+  await asmp('login', 'POST', { username: 'adminsmp', password: 'rahasia123' });
+  await asmp('password', 'POST', { lama: 'rahasia123', baru: 'rahasia456' });
+  assert.strictEqual((await asmp(`pdf/kartu?kelas_id=${kelas}`)).status, 404);          // kelas lembaga lain
+  assert.strictEqual((await asmp(`pdf/rapor-kelas?kelas_id=${kelas}`)).status, 404);
+  assert.strictEqual((await asmp(`pdf/kartu?siswa_id=${a}`)).status, 404);
+  assert.ok(kSMP);
+
+  // rapor di aplikasi wali: hanya anak sendiri, tanpa data pribadi
+  await yys('wali-akun', 'POST', { siswa_id: a });
+  const acc = (await yys('wali-akun?siswa_id=' + a)).data;
+  const pw = (await yys('wali-akun/reset', 'POST', { user_id: acc[0].user_id })).data.password;
+  const wali = client();
+  await wali('login', 'POST', { username: acc[0].username, password: pw });
+  await wali('password', 'POST', { lama: pw, baru: 'sandiwali99' });
+  const wr = (await wali(`wali/anak/${a}/rapor?semester=Ganjil`)).data;
+  assert.strictEqual(wr.format, 'madin'); assert.strictEqual(wr.madin.pokok[0].mapel, 'Fiqih');
+  assert.deepStrictEqual(Object.keys(wr.siswa).sort(), ['kelas_nama', 'kepala_lembaga', 'lembaga_kode', 'lembaga_nama', 'nama', 'nis', 'wali_kelas']);
+  const wp = await wali(`wali/anak/${a}/rapor-pdf?semester=Ganjil`);
+  assert.strictEqual(wp.status, 200); assert.strictEqual(wp.data.subarray(0, 5).toString(), '%PDF-');
+  assert.strictEqual((await wali(`wali/anak/${sis[1]}/rapor`)).status, 404);              // bukan anaknya
+  assert.strictEqual((await wali(`wali/anak/${sis[1]}/rapor-pdf`)).status, 404);
+
+  // dashboard: tren kehadiran, tunggakan per lembaga, siswa perlu perhatian
+  const J = (await yys('jenis_pelanggaran', 'GET', null, MADIN)).data.sort((x, y) => y.poin - x.poin)[0];
+  for (let i = 0; i < Math.ceil(50 / J.poin); i++) await yys('pelanggaran', 'POST', { siswa_id: sis[1], jenis_id: J.id, tanggal: '2026-10-01' }, MADIN);
+  await yys('tagihan', 'POST', { siswa_id: a, jenis: 'SPP', periode: '2026-09', jumlah: 100000, jatuh_tempo: '2026-09-10' });
+  const d = (await yys('dashboard')).data;
+  assert.ok(Array.isArray(d.tren_hadir));
+  assert.deepStrictEqual(d.tunggakan_per_lembaga, [{ kode: 'MADIN-ULA', jumlah: 100000 }]);
+  assert.ok(d.berisiko.some((r) => r.nama === 'Budi' && r.poin >= 50));
+});
+
+test('pengingat tagihan lewat WhatsApp: pratinjau, pengiriman, tanpa duplikat 7 hari, keamanan', async (t) => {
+  const kirim = [];
+  const fetchStub = async (url, init) => { kirim.push({ url, body: String(init.body) }); return { ok: true, status: 200 }; };
+  const KEYS = ['WA_PROVIDER', 'FONNTE_TOKEN'], lama = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+  t.after(() => KEYS.forEach((k) => (lama[k] === undefined ? delete process.env[k] : (process.env[k] = lama[k]))));
+  delete process.env.WA_PROVIDER;
+  const { client } = await boot(t, { fetch: fetchStub, jedaKirim: 0 });
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const SMP = me.lembagas.find((l) => l.kode === 'SMP').id, MI = me.lembagas.find((l) => l.kode === 'MI').id;
+  const kelas = (await yys('kelas', 'POST', { nama: 'VII' }, SMP)).data.id;
+  const s1 = (await yys('siswa', 'POST', { nama: 'Andin', nis: '1', kelas_id: kelas, telepon: '0812-3456-7890' }, SMP)).data.id;
+  const s2 = (await yys('siswa', 'POST', { nama: 'Budi', nis: '2', kelas_id: kelas }, SMP)).data.id;   // tanpa nomor
+  const s3 = (await yys('siswa', 'POST', { nama: 'Citra', nis: '3', kelas_id: kelas, telepon: '081300000003' }, SMP)).data.id;
+  for (const sid of [s1, s2, s3]) await yys('tagihan', 'POST', { siswa_id: sid, jenis: 'SPP', periode: '2026-09', jumlah: 150000, jatuh_tempo: '2026-09-10' });
+  await yys('tagihan', 'POST', { siswa_id: s1, jenis: 'Seragam', periode: '2026-12', jumlah: 99000, jatuh_tempo: '2999-01-01' });   // belum jatuh tempo
+  await yys('pembayaran', 'POST', { siswa_id: s3, jumlah: 150000, tanggal: '2026-09-12', jenis: 'SPP', bulan: '2026-09' });         // sudah lunas
+
+  assert.strictEqual((await yys('pengingat-tagihan', 'POST', {})).status, 400);                                  // pilih lembaga
+  const pr = (await yys('pengingat-tagihan', 'POST', {}, SMP)).data;
+  assert.deepStrictEqual([pr.siswa, pr.tagihan, pr.total, pr.tanpa_nomor, pr.dikirim], [1, 1, 150000, ['Budi'], false]);
+  assert.match(pr.contoh, /Andin/); assert.doesNotMatch(pr.contoh, /Seragam/);
+  assert.strictEqual((await yys('pengingat-tagihan', 'POST', { kirim: true }, SMP)).status, 400);               // WA belum tersambung
+  assert.strictEqual(kirim.length, 0);
+
+  Object.assign(process.env, { WA_PROVIDER: 'fonnte', FONNTE_TOKEN: 'tok' });
+  const k1 = (await yys('pengingat-tagihan', 'POST', { kirim: true }, SMP)).data;
+  assert.deepStrictEqual([k1.terkirim, k1.gagal], [1, 0]);
+  assert.strictEqual(kirim.length, 1);
+  assert.match(kirim[0].body, /target=6281234567890/); assert.match(decodeURIComponent(kirim[0].body.replace(/\+/g, ' ')), /Andin.*SPP 2026-09: Rp 150\.000/s);
+  const k2 = (await yys('pengingat-tagihan', 'POST', { kirim: true }, SMP)).data;                                  // 7 hari: tidak diulang
+  assert.deepStrictEqual([k2.siswa, k2.terkirim, k2.sudah_diingatkan], [0, 0, 1]);
+  assert.strictEqual(kirim.length, 1);
+  assert.ok((await yys('audit')).data.some((r) => r.aksi === 'pengingat_tagihan'));
+
+  // lembaga lain tidak terlihat; guru ditolak
+  assert.strictEqual((await yys('pengingat-tagihan', 'POST', {}, MI)).data.siswa, 0);
+  assert.strictEqual((await yys('pengingat-tagihan', 'POST', { kelas_id: kelas }, MI)).status, 404);
+  await yys('users', 'POST', { username: 'gurusmp', password: 'rahasia123', nama: 'G', role: 'guru', lembaga_ids: [SMP] });
+  const guru = client();
+  await guru('login', 'POST', { username: 'gurusmp', password: 'rahasia123' });
+  await guru('password', 'POST', { lama: 'rahasia123', baru: 'rahasia456' });
+  assert.strictEqual((await guru('pengingat-tagihan', 'POST', {})).status, 403);
+});
+
+test('backup: salinan ke luar server lewat rclone hanya bila diatur', async () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const { salinKeLuar } = require('./backup-lib');
+  assert.strictEqual(salinKeLuar('/tmp/x.db', ''), false);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-')), tanda = path.join(dir, 'dipanggil');
+  const bin = path.join(dir, 'rclone'); fs.writeFileSync(bin, `#!/bin/sh\necho "$@" > ${tanda}\n`, { mode: 0o755 });
+  process.env.RCLONE_BIN = bin;
+  assert.strictEqual(salinKeLuar('/tmp/sekolah-1.db', 'gdrive:backup'), true);
+  for (let i = 0; i < 50 && !fs.existsSync(tanda); i++) await new Promise((r) => setTimeout(r, 40));
+  delete process.env.RCLONE_BIN;
+  assert.strictEqual(fs.readFileSync(tanda, 'utf8').trim(), 'copy /tmp/sekolah-1.db gdrive:backup --immutable');
+});
+
+test('aplikasi belajar siswa: akun siswa, materi, ujian online sampai masuk ke nilai/rapor', async (t) => {
+  const { client, db } = await boot(t);
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [MI, SMP] = [id('MI'), id('SMP')];
+  const wib = (menit) => new Date(Date.now() + 7 * 3600e3 + menit * 60e3).toISOString().slice(0, 16);   // 'YYYY-MM-DDTHH:MM' WIB
+
+  const kelas = (await yys('kelas', 'POST', { nama: '5' }, MI)).data.id;
+  const kelas6 = (await yys('kelas', 'POST', { nama: '6' }, MI)).data.id;
+  const a = (await yys('siswa', 'POST', { nama: 'Andin', nis: '1', nisn: '1234567890', kelas_id: kelas }, MI)).data.id;
+  const b = (await yys('siswa', 'POST', { nama: 'Budi', nis: '2', kelas_id: kelas }, MI)).data.id;
+  const c6 = (await yys('siswa', 'POST', { nama: 'Citra Kelas Enam', nis: '3', kelas_id: kelas6 }, MI)).data.id;
+
+  // --- akun siswa ---
+  const massal = (await yys('siswa-akun', 'POST', { kelas_id: kelas })).data;                                   // satu kelas sekaligus
+  assert.deepStrictEqual([massal.akun.length, massal.dilewati], [2, 0]);
+  const ak = (await yys('siswa-akun?kelas_id=' + kelas)).data;
+  assert.deepStrictEqual(ak.map((x) => x.username !== null), [true, true]);
+  // reset menghasilkan password baru yang dapat dipakai login
+  const rs = (await yys('siswa-akun', 'POST', { siswa_id: a, reset: true })).data.akun[0];
+  assert.strictEqual(rs.username, '1234567890'); assert.match(rs.password, /^[A-Za-z0-9]{8}$/);
+  const rb = (await yys('siswa-akun', 'POST', { siswa_id: b, reset: true })).data.akun[0];
+  assert.strictEqual(rb.username, 'mi.2');
+  assert.strictEqual((await yys('siswa-akun', 'POST', { siswa_id: a })).data.akun.length, 0);                  // sudah punya akun: dilewati
+  const pdfAkun = await yys('akun-pdf', 'POST', { rows: [[rs.username, '5', rs.username, rs.password]] });
+  assert.strictEqual(pdfAkun.data.subarray(0, 5).toString(), '%PDF-');
+
+  const siswaA = client(), siswaB = client();
+  assert.strictEqual((await siswaA('login', 'POST', { username: rs.username, password: rs.password })).data.role, 'siswa');
+  assert.strictEqual((await siswaA('belajar/profil')).status, 403);                                           // wajib ganti password
+  assert.strictEqual((await siswaA('password', 'POST', { lama: rs.password, baru: 'belajarku1' })).status, 200);
+  await siswaB('login', 'POST', { username: rb.username, password: rb.password });
+  await siswaB('password', 'POST', { lama: rb.password, baru: 'belajarku2' });
+  // akun siswa tidak bisa memakai API petugas/wali dan sebaliknya
+  for (const p of ['siswa', 'nilai', 'ujian', 'dashboard', 'wali/anak', 'ujian-hasil?ujian_id=1']) assert.strictEqual((await siswaA(p)).status, 403, p);
+  assert.strictEqual((await yys('belajar/profil')).status, 403);
+  assert.strictEqual((await yys('users')).data.some((u) => u.role === 'siswa'), false);                       // tidak tercampur daftar pengguna
+
+  // --- materi ---
+  assert.strictEqual((await yys('materi', 'POST', { judul: 'Pecahan', isi: 'Pecahan adalah...', tautan: 'javascript:alert(1)' }, MI)).status, 400);
+  await yys('materi', 'POST', { kelas_id: kelas, mapel: 'Matematika', judul: 'Pecahan', isi: 'Pecahan adalah...', tautan: 'https://contoh.id/pecahan' }, MI);
+  await yys('materi', 'POST', { kelas_id: kelas6, judul: 'Materi kelas 6' }, MI);
+  await yys('materi', 'POST', { judul: 'Untuk semua kelas' }, MI);
+  assert.deepStrictEqual((await siswaA('belajar/materi')).data.map((m) => m.judul).sort(), ['Pecahan', 'Untuk semua kelas']);
+
+  // --- ujian: validasi, soal, terbit ---
+  const U = { kelas_id: kelas, mapel: 'Matematika', judul: 'Ulangan Harian 1', jenis: 'harian', mulai: wib(-10), selesai: wib(120), durasi: 30, acak: 1, tampil_nilai: 1 };
+  assert.strictEqual((await yys('ujian', 'POST', { ...U, selesai: wib(-20) }, MI)).status, 400);
+  assert.strictEqual((await yys('ujian', 'POST', { ...U, mulai: 'kapan-kapan' }, MI)).status, 400);
+  assert.strictEqual((await yys('ujian', 'POST', { ...U, durasi: 0 }, MI)).status, 400);
+  assert.strictEqual((await yys('ujian', 'POST', { ...U, status: 'terbit' }, MI)).status, 400);               // belum ada soal
+  const uid = (await yys('ujian', 'POST', U, MI)).data.id;
+  assert.strictEqual((await yys('ujian', 'POST', { ...U, kelas_id: (await yys('kelas', 'POST', { nama: 'X' }, SMP)).data.id }, MI)).status, 404);   // kelas lembaga lain
+  assert.strictEqual((await yys(`ujian/${uid}`, 'PUT', { status: 'terbit' })).status, 400);
+  const soal = [
+    { tipe: 'pg', teks: '2 + 3 = ?', opsi: ['4', '5', '6'], kunci: 1, bobot: 1 },
+    { tipe: 'pg', teks: '10 - 4 = ?', opsi: ['6', '7'], kunci: 0, bobot: 1 },
+    { tipe: 'uraian', teks: 'Jelaskan pecahan', bobot: 2 }];
+  assert.strictEqual((await yys('ujian-soal', 'PUT', { ujian_id: uid, soal: [{ tipe: 'pg', teks: 'x', opsi: ['a'], kunci: 0 }] })).status, 400);
+  assert.strictEqual((await yys('ujian-soal', 'PUT', { ujian_id: uid, soal: [{ tipe: 'pg', teks: 'x', opsi: ['a', 'b'], kunci: 5 }] })).status, 400);
+  assert.strictEqual((await yys('ujian-soal', 'PUT', { ujian_id: uid, soal })).data.jumlah, 3);
+  assert.strictEqual((await yys(`ujian/${uid}`, 'PUT', { status: 'terbit' })).status, 200);
+  // draf tidak terlihat siswa; kelas lain tidak melihat
+  const uDraf = (await yys('ujian', 'POST', { ...U, judul: 'Draf' }, MI)).data.id;
+  assert.deepStrictEqual((await siswaA('belajar/ujian')).data.ujian.map((x) => x.judul), ['Ulangan Harian 1']);
+  assert.strictEqual((await siswaA(`belajar/ujian/${uDraf}/mulai`, 'POST')).status, 404);
+
+  // --- siswa mengerjakan ---
+  const ls = (await siswaA('belajar/ujian')).data.ujian[0];
+  assert.deepStrictEqual([ls.status, ls.jumlah_soal, ls.nilai], ['buka', 3, null]);
+  const sesi = (await siswaA(`belajar/ujian/${uid}/mulai`, 'POST')).data;
+  assert.strictEqual(sesi.soal.length, 3);
+  assert.ok(JSON.stringify(sesi).indexOf('kunci') < 0, 'kunci tidak boleh dikirim ke siswa');
+  assert.ok(sesi.batas - sesi.sekarang <= 30 * 60e3 && sesi.batas > sesi.sekarang);
+  const idSoal = (teks) => sesi.soal.find((s) => s.teks.startsWith(teks));
+  const optIdx = (s, teks) => s.opsi.find((o) => o.t === teks).i;                                           // indeks asli, walau opsi diacak
+  const jawab = (s, j, x = {}) => siswaA(`belajar/ujian/${uid}/jawab`, 'POST', { soal_id: s.id, jawaban: j, ...x });
+  assert.strictEqual((await jawab(idSoal('2 + 3'), optIdx(idSoal('2 + 3'), '5'))).status, 200);
+  assert.strictEqual((await jawab(idSoal('10 - 4'), optIdx(idSoal('10 - 4'), '7'))).status, 200);           // salah
+  assert.strictEqual((await jawab(idSoal('2 + 3'), 9)).status, 400);                                          // di luar pilihan
+  assert.strictEqual((await jawab({ id: 999999 }, 0)).status, 400);
+  assert.strictEqual((await jawab(idSoal('Jelaskan'), 'Pecahan adalah bagian dari keseluruhan', { pindah: 2 })).status, 200);
+  const lanjut = (await siswaA(`belajar/ujian/${uid}/mulai`, 'POST')).data;                                   // lanjut: jawaban tersimpan
+  assert.strictEqual(Object.keys(lanjut.jawaban).length, 3);
+  assert.strictEqual(lanjut.batas, sesi.batas);
+  // siswa kelas lain tidak bisa; siswa lain di kelas sama punya sesi sendiri
+  const asing = (await yys('siswa-akun', 'POST', { siswa_id: c6, reset: true })).data.akun[0];
+  const cc = client(); await cc('login', 'POST', { username: asing.username, password: asing.password }); await cc('password', 'POST', { lama: asing.password, baru: 'belajarku3' });
+  assert.strictEqual((await cc(`belajar/ujian/${uid}/mulai`, 'POST')).status, 404);
+  assert.strictEqual((await cc('belajar/ujian')).data.ujian.length, 0);
+
+  const k = (await siswaA(`belajar/ujian/${uid}/kumpul`, 'POST')).data;
+  assert.deepStrictEqual([k.menunggu_nilai, k.nilai, k.benar, k.total_pg], [true, null, 1, 2]);                // uraian belum dinilai
+  assert.strictEqual((await siswaA(`belajar/ujian/${uid}/mulai`, 'POST')).status, 409);                       // sekali mengerjakan
+  assert.strictEqual((await jawab(idSoal('2 + 3'), 0)).status, 409);                                          // tidak bisa ubah setelah kumpul
+  assert.strictEqual((await yys(`ujian-soal`, 'PUT', { ujian_id: uid, soal: [] })).status, 409);              // soal terkunci
+
+  // --- guru menilai uraian -> nilai masuk ke tabel nilai dan rapor ---
+  const hl = (await yys('ujian-hasil?ujian_id=' + uid)).data;
+  assert.deepStrictEqual([hl.ringkas.siswa, hl.ringkas.mengerjakan, hl.ringkas.menunggu_nilai], [2, 1, 1]);
+  const pa = hl.peserta.find((x) => x.siswa_id === a);
+  assert.strictEqual(pa.pindah_tab, 2);
+  const det = (await yys('ujian-hasil/' + pa.peserta_id)).data;
+  assert.strictEqual(det.soal.find((s) => s.tipe === 'uraian').jawaban, 'Pecahan adalah bagian dari keseluruhan');
+  assert.strictEqual((await yys('ujian-hasil/' + pa.peserta_id, 'PUT', { skor: { [det.soal[0].id]: 1 } })).status, 400);   // pg tidak bisa diberi skor manual
+  assert.strictEqual((await yys('ujian-hasil/' + pa.peserta_id, 'PUT', { skor: { [det.soal[2].id]: 5 } })).status, 400);   // melebihi bobot
+  const gr = (await yys('ujian-hasil/' + pa.peserta_id, 'PUT', { skor: { [det.soal[2].id]: 1.5 } })).data;
+  assert.strictEqual(gr.nilai, 62.5);                                                                          // (1 benar + 1,5 uraian) / 4 bobot
+  const nilai = (await yys('nilai?siswa_id=' + a)).data;
+  assert.deepStrictEqual([nilai.length, nilai[0].mapel, nilai[0].jenis, nilai[0].nilai], [1, 'Matematika', 'Ulangan Harian', 62.5]);
+  await yys('ujian-hasil/' + pa.peserta_id, 'PUT', { skor: { [det.soal[2].id]: 2 } });                         // koreksi: memperbarui, bukan menggandakan
+  const nilai2 = (await yys('nilai?siswa_id=' + a)).data;
+  assert.deepStrictEqual([nilai2.length, nilai2[0].nilai], [1, 75]);
+  assert.strictEqual((await yys(`rapor?siswa_id=${a}`)).data.nilai[0].rata, 75);
+  const hsl = (await siswaA(`belajar/ujian/${uid}/hasil`)).data;
+  assert.deepStrictEqual([hsl.nilai, hsl.menunggu_nilai], [75, false]);
+  assert.strictEqual((await siswaA('belajar/nilai')).data[0].nilai, 75);
+  assert.strictEqual((await yys(`export/ujian-hasil?ujian_id=${uid}`)).status, 200);
+
+  // --- waktu: belum dibuka, terlewat, dan kadaluwarsa saat sedang mengerjakan ---
+  const idBelum = (await yys('ujian', 'POST', { ...U, judul: 'Besok', mulai: wib(60), selesai: wib(180) }, MI)).data.id;
+  const idLewat = (await yys('ujian', 'POST', { ...U, judul: 'Kemarin', mulai: wib(-300), selesai: wib(-200) }, MI)).data.id;
+  const idCepat = (await yys('ujian', 'POST', { ...U, judul: 'Cepat', mulai: wib(-5), selesai: wib(60), durasi: 1, tampil_nilai: 0 }, MI)).data.id;
+  for (const x of [idBelum, idLewat, idCepat]) {
+    await yys('ujian-soal', 'PUT', { ujian_id: x, soal: [{ tipe: 'pg', teks: 'Satu?', opsi: ['ya', 'tidak'], kunci: 0 }] });
+    await yys(`ujian/${x}`, 'PUT', { status: 'terbit' });
+  }
+  assert.strictEqual((await siswaB(`belajar/ujian/${idBelum}/mulai`, 'POST')).status, 403);
+  assert.strictEqual((await siswaB(`belajar/ujian/${idLewat}/mulai`, 'POST')).status, 403);
+  const stat = Object.fromEntries((await siswaB('belajar/ujian')).data.ujian.map((x) => [x.judul, x.status]));
+  assert.deepStrictEqual([stat.Besok, stat.Kemarin, stat.Cepat], ['belum', 'terlewat', 'buka']);
+  const s2 = (await siswaB(`belajar/ujian/${idCepat}/mulai`, 'POST')).data;
+  assert.ok(s2.batas - s2.sekarang <= 60e3);
+  await siswaB(`belajar/ujian/${idCepat}/jawab`, 'POST', { soal_id: s2.soal[0].id, jawaban: s2.soal[0].opsi.find((o) => o.t === 'ya').i });
+  // paksa kedaluwarsa: waktu habis -> jawaban baru ditolak, dikumpulkan & dinilai otomatis
+  db.prepare('UPDATE ujian_peserta SET batas = ? WHERE ujian_id = ?').run(Date.now() - 20000, idCepat);
+  assert.strictEqual((await siswaB(`belajar/ujian/${idCepat}/jawab`, 'POST', { soal_id: s2.soal[0].id, jawaban: 1 })).status, 409);
+  const hb = (await yys(`ujian-hasil?ujian_id=${idCepat}`)).data;
+  assert.deepStrictEqual([hb.ringkas.selesai, hb.ringkas.rata], [1, 100]);                                    // jawaban sebelum habis tetap dihitung
+  assert.strictEqual((await yys('nilai?siswa_id=' + b)).data.length, 1);
+  const hs = (await siswaB(`belajar/ujian/${idCepat}/hasil`)).data;
+  assert.deepStrictEqual([hs.nilai, hs.tampil_nilai], [null, false]);                                          // guru menyembunyikan nilai dari siswa
+  assert.strictEqual((await siswaB('belajar/nilai')).data.length, 0);
 });
