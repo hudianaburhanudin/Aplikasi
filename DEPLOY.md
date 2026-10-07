@@ -44,11 +44,26 @@ docker compose logs app | grep "Akun awal"
 Buka `https://DOMAIN-ANDA`, masuk, dan **segera ganti password** saat diminta.
 
 ## 4. Isi data awal (urutan yang disarankan)
-1. Menu **Lembaga**: periksa 7 lembaga, buka **pendaftaran online** untuk yang membutuhkan.
-2. **Tahun Ajaran**: tetapkan yang aktif.
-3. **Pengguna**: buat Admin Lembaga (satu per lembaga) dan guru (isi **No. WhatsApp**).
-4. **Guru**, **Kelas**, **Siswa** (atau lewat PPDB), lalu **Akun wali**.
-5. Sesuaikan **Jenis Pelanggaran & poin** per lembaga.
+1. Menu **Lembaga** (hanya Admin Yayasan): periksa 7 lembaga, isi **nama kepala**, **NSM**, **NPSN**, jenjang (isi `Madin` untuk
+   Madin agar rapor memakai format Madin), dan buka **pendaftaran online** bila perlu.
+2. **Tahun Ajaran**: tetapkan yang aktif. **Profil Yayasan**: isi semua kolom bertanda [ISI] untuk Kebijakan Privasi.
+3. **Pengguna** (peran berjenjang, hanya Admin Yayasan yang membuat akun ini):
+   | Peran | Dibuat untuk | Lembaga |
+   |---|---|---|
+   | Admin Yayasan | pengurus yayasan (minimal dua orang agar ada cadangan) | semua otomatis |
+   | Bendahara Yayasan | bendahara yayasan | semua otomatis |
+   | Admin Lembaga | kepala/tata usaha tiap lembaga | pilih lembaganya |
+   | Bendahara Lembaga | bendahara tiap lembaga (bila ada) | pilih lembaganya |
+   Admin Lembaga kemudian membuat sendiri akun **staf** dan **guru** (isi No. WhatsApp guru) untuk lembaganya.
+4. **Siswa**: pakai tombol **Impor Excel** (berkas By Name By Address / Dapodik), lalu **Kelas**, **Guru**. Periksa pratinjau
+   sebelum menyimpan; perbaiki NIS ganda di Excel bila dilaporkan.
+5. **Mapel Rapor** (KKM per mapel, khusus Madin), **Jadwal** (menu *Impor massal*; contoh CSV ada di `data/jadwal/`).
+6. **Akun wali** (menu Siswa → Akun wali) dan **Akun Siswa** (menu Akun Siswa, per kelas; unduh PDF-nya untuk dibagikan).
+7. Sesuaikan **Jenis Pelanggaran & poin** per lembaga.
+
+Alamat untuk dibagikan: petugas `https://DOMAIN-ANDA/`, wali murid `https://DOMAIN-ANDA/wali`, siswa `https://DOMAIN-ANDA/siswa`,
+pendaftaran `https://DOMAIN-ANDA/daftar`, kebijakan privasi `https://DOMAIN-ANDA/privasi`. Ketiganya dapat dipasang di layar utama
+HP ("Tambahkan ke Layar Utama") tanpa toko aplikasi.
 
 ## 5. Memperbarui aplikasi
 ```bash
@@ -68,8 +83,10 @@ buat backup manual dulu: `docker compose exec app node backup.js`.
   # lokasi volume di server:  docker volume inspect aplikasi_data   (cari "Mountpoint")
   rsync -av USER@IP-SERVER:/var/lib/docker/volumes/aplikasi_data/_data/backup/ ./backup-sekolah/
   ```
-  Alternatif: `rclone` ke Google Drive/penyimpanan cloud lain lewat cron. Data berisi informasi anak: simpan salinan
-  di tempat yang aman dan terbatas aksesnya.
+  **Otomatis ke cloud (disarankan)**: image Docker sudah memuat `rclone`. Di server jalankan sekali `docker compose run --rm app rclone config`
+  (konfigurasi tersimpan di volume `data`; untuk Google Drive pilih "headless" dan jalankan `rclone authorize "drive"` di komputer Anda, lalu tempel tokennya), buat remote bernama mis. `gdrive`, lalu isi `BACKUP_RCLONE_REMOTE=gdrive:backup-sekolah`
+  di `.env` dan `docker compose up -d`. Tiap backup baru otomatis disalin ke sana; cek `docker compose logs app` untuk
+  "Backup disalin ke". Data berisi informasi anak: pakai akun penyimpanan khusus yayasan dengan akses terbatas.
 - **Memulihkan**:
   ```bash
   docker compose stop app
@@ -90,3 +107,11 @@ buat backup manual dulu: `docker compose exec app node backup.js`.
 - [ ] Firewall hanya membuka 22, 80, 443.
 - [ ] Kebijakan privasi disiapkan (wajib untuk toko aplikasi dan Meta). Data siswa tidak boleh dibagikan di luar keperluan sekolah.
 - [ ] WhatsApp sudah diuji dengan satu pesan nyata (lihat `META-WHATSAPP.md`).
+- [ ] Tiap peran sudah dicoba: Admin Lembaga tidak melihat menu keuangan; Bendahara hanya melihat Pembayaran/Tagihan; wali hanya melihat anaknya; siswa hanya melihat materi dan ujian.
+- [ ] Satu ujian percobaan dikerjakan dari HP siswa sungguhan (Wi-Fi sekolah) sebelum dipakai untuk UTS/UAS.
+
+## 9. Rencana uji coba (disarankan)
+1. **Minggu 1-2**: satu lembaga saja (mis. MI): siswa, absensi harian, tagihan, aplikasi wali. Kumpulkan keluhan petugas.
+2. **Minggu 3-4**: tambahkan ujian harian dengan satu kelas; periksa nilai masuk ke rapor.
+3. Baru kemudian lembaga lain, WhatsApp (Meta), dan terakhir pembungkus Play Store/App Store.
+Siapkan satu orang di yayasan yang memegang akun Admin Yayasan cadangan dan tahu cara memulihkan backup.

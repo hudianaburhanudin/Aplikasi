@@ -1,10 +1,11 @@
 FROM node:22-alpine
-ENV NODE_ENV=production DB_FILE=/data/sekolah.db PORT=3000
+RUN apk add --no-cache rclone
+ENV NODE_ENV=production DB_FILE=/data/sekolah.db PORT=3000 RCLONE_CONFIG=/data/rclone/rclone.conf
 WORKDIR /app
 COPY package.json ./
 COPY *.js ./
 COPY public ./public
-RUN rm -f server.test.js && mkdir -p /data && chown -R node:node /data /app
+RUN rm -f server.test.js && mkdir -p /data/rclone && chown -R node:node /data /app
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
