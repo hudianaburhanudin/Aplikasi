@@ -6,6 +6,8 @@ const { openDb, hashPassword, verifyPassword, seedJenis } = require('./db');
 const { createWa, waNorm } = require('./wa');
 const { backupNow, backupTerakhir } = require('./backup-lib');
 const { buildXlsx } = require('./xlsx');
+const { readXlsx } = require('./xlsx-read');
+const { parseSheet } = require('./siswa-impor');
 const { tablePdf, raporPdf, kuitansiPdf, jadwalPdf } = require('./pdf');
 
 const rp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -34,7 +36,7 @@ const TSTATUS = `CASE WHEN ${TERBAYAR} >= t.jumlah THEN 'lunas' WHEN ${TERBAYAR}
 const LJ = 'LEFT JOIN lembaga l ON l.id = ';
 const RES = {
   lembaga: {
-    a: 'l', table: 'lembaga', cols: ['kode', 'nama', 'jenjang', 'alamat', 'telepon', 'ppdb_buka', 'kepala'], req: ['kode', 'nama'],
+    a: 'l', table: 'lembaga', cols: ['kode', 'nama', 'jenjang', 'alamat', 'telepon', 'ppdb_buka', 'kepala', 'nsm', 'npsn'], req: ['kode', 'nama'],
     sel: 'SELECT l.* FROM lembaga l', search: ['l.nama', 'l.kode'], filters: {}, order: 'l.id',
     scopeCol: 'l.id', scopeKey: 'id', writeRole: 'yayasan',
   },
@@ -56,10 +58,10 @@ const RES = {
   },
   siswa: {
     a: 's', table: 'siswa', own: true,
-    cols: ['nis', 'nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'kelas_id', 'wali', 'telepon', 'alamat', 'status', 'tahun_masuk', 'tahun_lulus'], req: ['nama'],
+    cols: ['nis', 'nisn', 'nis_lokal', 'nama', 'jk', 'tempat_lahir', 'tgl_lahir', 'nik', 'no_kk', 'agama', 'jurusan', 'kelas_id', 'status', 'mengulang', 'tahun_masuk', 'tahun_lulus', 'wali', 'telepon', 'email', 'alamat', 'rt', 'rw', 'dusun', 'desa', 'kecamatan', 'kabupaten', 'kode_pos', 'jenis_tinggal', 'transportasi', 'nama_ayah', 'nik_ayah', 'lahir_ayah', 'pendidikan_ayah', 'pekerjaan_ayah', 'penghasilan_ayah', 'nama_ibu', 'nik_ibu', 'lahir_ibu', 'pendidikan_ibu', 'pekerjaan_ibu', 'penghasilan_ibu', 'kip_kemenag', 'kip_diknas', 'kps', 'pkh', 'sktm'], req: ['nama'],
     enums: { jk: ['L', 'P'], status: ['aktif', 'lulus', 'pindah', 'keluar'] },
-    sel: `SELECT s.*, l.kode lembaga_kode, k.nama kelas_nama FROM siswa s ${LJ}s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id`,
-    search: ['s.nama', 's.nis'], filters: { kelas_id: 's.kelas_id', status: 's.status' }, order: 'l.id, s.nama',
+    sel: `SELECT s.*, l.kode lembaga_kode, l.nama lembaga_nama, l.nsm lembaga_nsm, k.nama kelas_nama FROM siswa s ${LJ}s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id`,
+    search: ['s.nama', 's.nis', 's.nisn', 's.nis_lokal'], filters: { kelas_id: 's.kelas_id', status: 's.status' }, order: 'l.id, s.nama',
     scopeCol: 's.lembaga_id', scopeKey: 'lembaga_id',
   },
   tagihan: {
@@ -133,9 +135,35 @@ const EXPORTS = {
   tagihan: ['Tagihan', [['Lembaga', 'lembaga_kode'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Jenis', 'jenis'], ['Periode', 'periode'], ['Jatuh Tempo', 'jatuh_tempo'], ['Jumlah (Rp)', 'jumlah'], ['Terbayar (Rp)', 'terbayar'], ['Sisa (Rp)', 'sisa'], ['Status', 'status']]],
   pelanggaran: ['Pelanggaran Siswa', [['Lembaga', 'lembaga_kode'], ['Tanggal', 'tanggal'], ['NIS', 'nis'], ['Siswa', 'siswa_nama'], ['Kelas', 'kelas_nama'], ['Pelanggaran', 'jenis_nama'], ['Poin', 'poin'], ['Keterangan', 'keterangan'], ['Dicatat oleh', 'dicatat_oleh'], ['Sumber', 'sumber']]],
   pendaftar: ['Data Pendaftar', [['Lembaga', 'lembaga_kode'], ['No. Daftar', 'no_daftar'], ['Nama', 'nama'], ['L/P', 'jk'], ['Tgl Lahir', 'tgl_lahir'], ['Asal Sekolah', 'asal_sekolah'], ['Telepon', 'telepon'], ['Status', 'status']]],
+  'siswa-lengkap': ['Data Siswa Lengkap', [['Lembaga', 'lembaga_kode'], ['NIS', 'nis'], ['NISN', 'nisn'], ['NIS Lokal (EMIS)', 'nis_lokal'], ['Nama', 'nama'], ['L/P', 'jk'], ['Tempat Lahir', 'tempat_lahir'], ['Tanggal Lahir', 'tgl_lahir'],
+    ['NIK', 'nik'], ['No. KK', 'no_kk'], ['Agama', 'agama'], ['Kelas', 'kelas_nama'], ['Jurusan', 'jurusan'], ['Nama Ayah', 'nama_ayah'], ['NIK Ayah', 'nik_ayah'], ['Tahun Lahir Ayah', 'lahir_ayah'], ['Pendidikan Ayah', 'pendidikan_ayah'], ['Pekerjaan Ayah', 'pekerjaan_ayah'], ['Penghasilan Ayah', 'penghasilan_ayah'],
+    ['Nama Ibu', 'nama_ibu'], ['NIK Ibu', 'nik_ibu'], ['Tahun Lahir Ibu', 'lahir_ibu'], ['Pendidikan Ibu', 'pendidikan_ibu'], ['Pekerjaan Ibu', 'pekerjaan_ibu'], ['Penghasilan Ibu', 'penghasilan_ibu'], ['Wali', 'wali'], ['Telepon/HP', 'telepon'], ['Email', 'email'],
+    ['Alamat', 'alamat'], ['RT', 'rt'], ['RW', 'rw'], ['Dusun', 'dusun'], ['Desa', 'desa'], ['Kecamatan', 'kecamatan'], ['Kabupaten', 'kabupaten'], ['Kode Pos', 'kode_pos'], ['Jenis Tinggal', 'jenis_tinggal'], ['Transportasi', 'transportasi'],
+    ['KIP Kemenag', 'kip_kemenag'], ['KIP Diknas', 'kip_diknas'], ['KPS', 'kps'], ['PKH', 'pkh'], ['SKTM', 'sktm'], ['Tahun Masuk', 'tahun_masuk'], ['Tahun Lulus', 'tahun_lulus'], ['Status', 'status']]],
+  // Format "By Name By Address" Kemenag/EMIS
+  'by-name': ['By Name By Address Siswa', [['No', 'no'], ['NIS Lokal (EMIS)', 'nis_lokal'], ['NISN', 'nisn'], ['No Induk', 'nis'], ['Nama Siswa', 'nama'], ['Tempat Lahir', 'tempat_lahir'], ['Tanggal Lahir', 'tgl_lahir'], ['NIK Siswa', 'nik'], ['Nomor KK', 'no_kk'],
+    ['Jenis Kelamin', 'jk'], ['Kelas', 'kelas_nama'], ['Jurusan', 'jurusan'], ['KIP KEMENAG', 'kip_kemenag'], ['KIP DIKNAS', 'kip_diknas'], ['KPS', 'kps'], ['PKH', 'pkh'], ['SKTM', 'sktm'], ['Nama Ayah', 'nama_ayah'], ['NIK Ayah', 'nik_ayah'], ['Nama Ibu', 'nama_ibu'], ['NIK Ibu', 'nik_ibu'],
+    ['Alamat Siswa', 'alamat_lengkap'], ['Desa', 'desa'], ['Kecamatan', 'kecamatan'], ['Kabupaten', 'kabupaten'], ['NSM', 'lembaga_nsm'], ['Nama Madrasah', 'lembaga_nama'], ['STATUS', 'status_ulang']]],
+  // Format rekapitulasi data siswa untuk Satuan Pelayanan Pemenuhan Gizi (MBG/SPPG)
+  sppg: ['Rekapitulasi Data Siswa (SPPG)', [['NO', 'no'], ['NISN', 'nisn'], ['NAMA SISWA', 'nama'], ['UMUR', 'umur'], ['JENIS KELAMIN', 'jk'], ['KELAS', 'kelas_nama'], ['NAMA ORANG TUA / WALI', 'ortu']]],
   'rekap-absensi': ['Rekap Absensi', [['NIS', 'nis'], ['Nama', 'nama'], ['Hadir', 'h'], ['Sakit', 's'], ['Izin', 'i'], ['Alpa', 'a']]],
 };
-const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin', 'hari', 'urut', 'kkm']);
+const EXPORT_SRC = { 'siswa-lengkap': 'siswa', 'by-name': 'siswa', sppg: 'siswa' };
+function umurTeks(tgl, today) {
+  if (!tgl) return '';
+  const [y, m, d] = tgl.split('-').map(Number), [ty, tm, td] = today.split('-').map(Number);
+  let bln = (ty - y) * 12 + (tm - m) - (td < d ? 1 : 0);
+  if (!(bln >= 0)) return '';
+  return `${Math.floor(bln / 12)} Thn ${bln % 12} Bln`;
+}
+function hitungTurunan(r, i, today) {
+  r.no = i + 1;
+  r.umur = umurTeks(r.tgl_lahir, today);
+  r.ortu = r.wali || [r.nama_ayah, r.nama_ibu].filter(Boolean).join(' / ');
+  r.alamat_lengkap = [r.alamat, r.dusun && 'Dusun ' + r.dusun, (r.rt || r.rw) && `RT/RW ${r.rt || '-'}/${r.rw || '-'}`].filter(Boolean).join(', ');
+  r.status_ulang = r.mengulang ? 'MENGULANG' : 'TIDAK MENGULANG';
+}
+const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin', 'hari', 'urut', 'kkm', 'mengulang']);
 const KENAIKAN = ['naik', 'lulus', 'pindah', 'keluar'];
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
@@ -143,6 +171,10 @@ const ABSEN = new Set(['H', 'S', 'I', 'A']);
 const ROLES = ['yayasan', 'admin', 'staf', 'guru']; // 'wali' dikelola lewat /api/wali-akun
 // Guru hanya boleh: absensi dan pelanggaran (tulis), serta melihat kelas/siswa/jenis pelanggaran.
 const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran', 'jadwal', 'jadwal-kelas']);
+// Data pribadi siswa yang tidak perlu dilihat guru
+const SISWA_SENSITIF = ['nik', 'no_kk', 'alamat', 'rt', 'rw', 'dusun', 'desa', 'kecamatan', 'kabupaten', 'kode_pos', 'email', 'nik_ayah', 'nik_ibu',
+  'lahir_ayah', 'pendidikan_ayah', 'pekerjaan_ayah', 'penghasilan_ayah', 'lahir_ibu', 'pendidikan_ibu', 'pekerjaan_ibu', 'penghasilan_ibu',
+  'kip_kemenag', 'kip_diknas', 'kps', 'pkh', 'sktm', 'jenis_tinggal', 'transportasi', 'agama'];
 const GURU_BACA_SAJA = new Set(['kelas', 'siswa', 'jenis_pelanggaran', 'jadwal', 'jadwal-kelas']);
 
 // Jadwal pelajaran
@@ -289,9 +321,9 @@ function createApp(dbFile, opts = {}) {
     if (kid && lembagaOf('kelas', kid, ctx) !== row.lembaga_id) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
     db.exec('BEGIN');
     try {
-      const r = db.prepare(`INSERT INTO siswa (lembaga_id, nis, nama, jk, tempat_lahir, tgl_lahir, nik, alamat, wali, telepon, status, kelas_id, tahun_masuk)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'aktif',?,?)`).run(row.lembaga_id, str(body.nis, 30), row.nama, row.jk, row.tempat_lahir, row.tgl_lahir, row.nik,
-        row.alamat, row.nama_ayah || row.nama_ibu, row.telepon, kid, row.tahun_ajaran);
+      const r = db.prepare(`INSERT INTO siswa (lembaga_id, nis, nama, jk, tempat_lahir, tgl_lahir, nik, alamat, wali, telepon, status, kelas_id, tahun_masuk, nama_ayah, nama_ibu)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'aktif',?,?,?,?)`).run(row.lembaga_id, str(body.nis, 30), row.nama, row.jk, row.tempat_lahir, row.tgl_lahir, row.nik,
+        row.alamat, row.nama_ayah || row.nama_ibu, row.telepon, kid, row.tahun_ajaran, row.nama_ayah, row.nama_ibu);
       const sid = Number(r.lastInsertRowid);
       db.prepare("INSERT INTO mutasi (siswa_id, jenis, ke_kelas_id, tahun_ajaran, tanggal) VALUES (?, 'masuk', ?, ?, ?)").run(sid, kid, row.tahun_ajaran, todayWib());
       db.prepare("UPDATE pendaftar SET status = 'terdaftar', siswa_id = ? WHERE id = ?").run(sid, id);
@@ -491,7 +523,12 @@ function createApp(dbFile, opts = {}) {
     if (!s || !ctx.scope.ids.includes(s.lembaga_id)) throw new HttpError(404, 'Data tidak ditemukan');
     const rows = [], add = (kat, tgl, uraian) => rows.push([kat, tgl || '', uraian]);
     for (const [k, v] of [['Nama', s.nama], ['NIS', s.nis], ['NIK', s.nik], ['Jenis kelamin', s.jk], ['Tempat lahir', s.tempat_lahir], ['Tanggal lahir', s.tgl_lahir], ['Alamat', s.alamat], ['Orang tua/wali', s.wali],
-      ['Telepon', s.telepon], ['Kelas', s.kelas_nama], ['Status', s.status], ['Tahun masuk', s.tahun_masuk], ['Tahun lulus', s.tahun_lulus]]) if (v) add('Identitas', '', `${k}: ${v}`);
+      ['Telepon', s.telepon], ['Kelas', s.kelas_nama], ['Status', s.status], ['Tahun masuk', s.tahun_masuk], ['Tahun lulus', s.tahun_lulus],
+      ['NISN', s.nisn], ['NIS lokal (EMIS)', s.nis_lokal], ['No. KK', s.no_kk], ['Agama', s.agama], ['Email', s.email],
+      ['Alamat lengkap', [s.alamat, s.dusun, s.rt || s.rw ? `RT/RW ${s.rt || '-'}/${s.rw || '-'}` : '', s.desa, s.kecamatan, s.kabupaten, s.kode_pos].filter(Boolean).join(', ')],
+      ['Ayah', [s.nama_ayah, s.nik_ayah && 'NIK ' + s.nik_ayah, s.lahir_ayah && 'lahir ' + s.lahir_ayah, s.pendidikan_ayah, s.pekerjaan_ayah, s.penghasilan_ayah].filter(Boolean).join(', ')],
+      ['Ibu', [s.nama_ibu, s.nik_ibu && 'NIK ' + s.nik_ibu, s.lahir_ibu && 'lahir ' + s.lahir_ibu, s.pendidikan_ibu, s.pekerjaan_ibu, s.penghasilan_ibu].filter(Boolean).join(', ')],
+      ['Bantuan', [s.kip_kemenag && 'KIP Kemenag ' + s.kip_kemenag, s.kip_diknas && 'KIP Diknas ' + s.kip_diknas, s.kps && 'KPS ' + s.kps, s.pkh && 'PKH ' + s.pkh, s.sktm && 'SKTM ' + s.sktm].filter(Boolean).join(', ')]]) if (v) add('Identitas', '', `${k}: ${v}`);
     for (const m of db.prepare('SELECT m.tanggal, m.jenis, kd.nama dari, kk.nama ke, m.keterangan FROM mutasi m LEFT JOIN kelas kd ON kd.id = m.dari_kelas_id LEFT JOIN kelas kk ON kk.id = m.ke_kelas_id WHERE m.siswa_id = ? ORDER BY m.id').all(s.id))
       add('Riwayat kelas', m.tanggal, `${m.jenis}${m.dari ? ' dari ' + m.dari : ''}${m.ke ? ' ke ' + m.ke : ''}${m.keterangan ? ' (' + m.keterangan + ')' : ''}`);
     const ab = db.prepare("SELECT COALESCE(SUM(status='H'),0) h, COALESCE(SUM(status='S'),0) s, COALESCE(SUM(status='I'),0) i, COALESCE(SUM(status='A'),0) a FROM absensi WHERE siswa_id = ?").get(s.id);
@@ -892,6 +929,92 @@ function createApp(dbFile, opts = {}) {
     return out;
   }
 
+  // ---- impor siswa dari Excel (By Name By Address EMIS, Dapodik, MBG) ----
+  const IMPOR_KOLOM = RES.siswa.cols.filter((c) => !['kelas_id', 'status', 'tahun_lulus'].includes(c));
+  function imporSiswa(body, ctx) {
+    const lid = ctx.scope.target;
+    if (!lid) throw new HttpError(400, 'Pilih lembaga terlebih dahulu');
+    let buf;
+    try { buf = Buffer.from(String(body.file || ''), 'base64'); } catch { buf = Buffer.alloc(0); }
+    if (buf.length < 100) throw new HttpError(400, 'Berkas Excel (.xlsx) kosong atau tidak valid');
+    let sheets;
+    try { sheets = readXlsx(buf); } catch (e) { throw new HttpError(400, e.message || 'Berkas tidak dapat dibaca. Gunakan format .xlsx'); }
+    const info = sheets.map((sh) => { const r = parseSheet(sh.rows); return { name: sh.name, ok: r.ok, jumlah: r.ok ? r.records.length : 0, error: r.error || null }; });
+    const pilih = body.sheet ? sheets.find((x) => x.name === body.sheet) : (sheets.find((x) => info.find((i) => i.name === x.name).jumlah > 0) || sheets[0]);
+    if (!pilih) throw new HttpError(400, 'Sheet tidak ditemukan');
+    const hasil = parseSheet(pilih.rows);
+    if (!hasil.ok) throw new HttpError(400, hasil.error);
+    if (hasil.records.length > 5000) throw new HttpError(400, 'Maksimal 5000 siswa per impor; pecah berkasnya');
+    const kelasDb = new Map(db.prepare('SELECT id, nama FROM kelas WHERE lembaga_id = ?').all(lid).map((k) => [k.nama.toLowerCase(), k.id]));
+    const kelasBaru = new Set(hasil.records.filter((r) => r.kelas && !kelasDb.has(r.kelas.toLowerCase())).map((r) => r.kelas));
+    // baris ganda dalam berkas: nama sama -> digabung (baris belakangan menimpa); nama berbeda tetapi NIS/NISN sama -> ditolak
+    const gabung = new Map(), unik = [], infoGanda = [];
+    for (const r of hasil.records) {
+      const kunci = [['nisn', r.nisn], ['nis_lokal', r.nis_lokal], ['nik', r.nik], ['nis', r.nis]].filter(([, v]) => v).map(([k, v]) => k + ':' + v);
+      const ada = kunci.map((k) => gabung.get(k)).find(Boolean);
+      if (ada) {
+        if (ada.nama.toLowerCase() !== r.nama.toLowerCase()) throw new HttpError(400, `Baris ${ada._baris} dan ${r._baris} memakai NIS/NISN yang sama tetapi namanya berbeda ("${ada.nama}" dan "${r.nama}"). Perbaiki berkasnya.`);
+        for (const [k, v] of Object.entries(r)) if (v != null && k !== '_baris') ada[k] = v;
+        infoGanda.push(`Baris ${r._baris} sama dengan baris ${ada._baris} (${r.nama}), digabung`);
+        continue;
+      }
+      unik.push(r);
+      for (const k of kunci) gabung.set(k, r);
+    }
+    hasil.records = unik;
+    hasil.warnings.push(...infoGanda.slice(0, 20));
+    const cari = (r) => {
+      for (const [k, v] of [['nisn', r.nisn], ['nis_lokal', r.nis_lokal], ['nik', r.nik], ['nis', r.nis]]) {
+        if (!v) continue;
+        const x = db.prepare(`SELECT id FROM siswa WHERE lembaga_id = ? AND ${k} = ?`).get(lid, v);
+        if (x) return x.id;
+      }
+      const sama = db.prepare('SELECT id, tgl_lahir FROM siswa WHERE lembaga_id = ? AND lower(nama) = lower(?)').all(lid, r.nama)
+        .filter((x) => !r.tgl_lahir || !x.tgl_lahir || x.tgl_lahir === r.tgl_lahir);
+      return sama.length === 1 ? sama[0].id : null;     // hanya bila tidak ambigu
+    };
+    const ringkas = { sheet: pilih.name, sheets: info, baris_judul: hasil.header, kolom_terbaca: hasil.fields, kolom_diabaikan: hasil.unmapped, peringatan: hasil.warnings,
+      kelas_baru: [...kelasBaru], contoh: hasil.records.slice(0, 5).map(({ _baris, ...r }) => r) };
+    let baru = 0, ubah = 0, sama = 0;
+    const rencana = hasil.records.map((r) => ({ r, id: cari(r) }));
+    // dua baris pada berkas yang menunjuk siswa yang sama/ NIS yang sama dicegah agar tidak terjadi duplikat
+    const dipakai = new Set();
+    for (const x of rencana) {
+      if (x.id) { if (dipakai.has(x.id)) throw new HttpError(400, `Baris ${x.r._baris}: siswa "${x.r.nama}" muncul dua kali pada berkas`); dipakai.add(x.id); }
+    }
+    for (const x of rencana) if (x.id) ubah++; else baru++;
+    ringkas.baru = baru; ringkas.diperbarui = ubah; ringkas.total = rencana.length;
+    if (!body.simpan) return { ...ringkas, disimpan: false };
+    if (kelasBaru.size && !body.buat_kelas) throw new HttpError(400, `Kelas belum ada: ${[...kelasBaru].join(', ')}. Centang "buat kelas yang belum ada".`);
+    const ta = activeTahun(), tm = str(body.tahun_masuk, 20);
+    db.exec('BEGIN');
+    try {
+      for (const kn of kelasBaru) kelasDb.set(kn.toLowerCase(), Number(db.prepare('INSERT INTO kelas (lembaga_id, nama, tahun_ajaran) VALUES (?,?,?)').run(lid, kn, ta).lastInsertRowid));
+      for (const { r, id } of rencana) {
+        const d = {};
+        for (const c of IMPOR_KOLOM) if (r[c] != null) d[c] = r[c];
+        if (r.kelas) d.kelas_id = kelasDb.get(r.kelas.toLowerCase());
+        if (id) {
+          const ks = Object.keys(d);
+          if (ks.length) db.prepare(`UPDATE siswa SET ${ks.map((k) => k + ' = ?').join(',')} WHERE id = ?`).run(...ks.map((k) => d[k]), id);
+        } else {
+          d.lembaga_id = lid; d.status = 'aktif';
+          if (tm && !d.tahun_masuk) d.tahun_masuk = tm;
+          const ks = Object.keys(d);
+          const sid = Number(db.prepare(`INSERT INTO siswa (${ks.join(',')}) VALUES (${ph(ks)})`).run(...ks.map((k) => d[k])).lastInsertRowid);
+          db.prepare("INSERT INTO mutasi (siswa_id, jenis, ke_kelas_id, tahun_ajaran, tanggal) VALUES (?, 'masuk', ?, ?, ?)").run(sid, d.kelas_id || null, ta, todayWib());
+        }
+      }
+      catat(ctx.user, 'impor_siswa', `${rencana.length} siswa (${baru} baru, ${ubah} diperbarui), lembaga #${lid}, sheet ${pilih.name}`);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      if (/UNIQUE/.test(String(e.message))) throw new HttpError(409, 'Ada NIS/NISN ganda pada berkas atau sudah dipakai siswa lain. Periksa kolom No Induk dan NISN.');
+      throw e;
+    }
+    return { ...ringkas, disimpan: true };
+  }
+
   // ---- manajemen pengguna: yayasan = semua; admin lembaga = hanya staf di lembaganya ----
   function users(method, id, body, ctx) {
     const me = ctx.user;
@@ -978,11 +1101,11 @@ function createApp(dbFile, opts = {}) {
     req.on('error', reject);
   });
 
-  const readBody = (req) => new Promise((resolve, reject) => {
+  const readBody = (req, max = 1e6) => new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > 1e6) { reject(new HttpError(413, 'Data terlalu besar')); req.destroy(); return; }
+      if (size > max) { reject(new HttpError(413, 'Data terlalu besar')); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => {
@@ -1084,7 +1207,8 @@ function createApp(dbFile, opts = {}) {
       if (name === 'pdf' && key === 'kuitansi') { const pb = crud(RES.pembayaran, 'GET', Number(q.id), {}, {}, ctx); return file(kuitansiPdf(pb, rp, logoJpeg(pb.lembaga_kode)), 'application/pdf', `kuitansi-${q.id}.pdf`); }
       const ex = EXPORTS[key];
       if (!ex) throw new HttpError(404, 'Data ekspor tidak ditemukan');
-      const data = key === 'rekap-absensi' ? rekapAbsensi(q, ctx) : list(RES[key], q, ctx);
+      const data = key === 'rekap-absensi' ? rekapAbsensi(q, ctx) : list(RES[EXPORT_SRC[key] || key], q, ctx);
+      if (EXPORT_SRC[key] === 'siswa') data.forEach((r, i) => hitungTurunan(r, i, today));
       const rows = data.map((r) => ex[1].map((c) => r[c[1]] ?? (key === 'rekap-absensi' ? 0 : '')));
       if (name === 'export') {
         return file(buildXlsx(ex[0], ex[1].map((c) => c[0]), rows),
@@ -1146,6 +1270,10 @@ function createApp(dbFile, opts = {}) {
       const r = rapor({ siswa_id: q.siswa_id, semester: q.semester }, ctx);
       return send(res, 200, raporCatatan(r.siswa.id, q.semester));
     }
+    if (name === 'siswa-impor' && method === 'POST') {
+      if (ctx.user.role === 'guru') throw new HttpError(403, 'Akses ditolak');
+      return send(res, 200, imporSiswa(await readBody(req, 12e6), ctx));
+    }
     if (name === 'jadwal-kelas') return send(res, 200, jadwalKelas(q, ctx));
     if (name === 'jadwal-impor' && method === 'POST') {
       if (ctx.user.role === 'guru') throw new HttpError(403, 'Akses ditolak');
@@ -1157,7 +1285,7 @@ function createApp(dbFile, opts = {}) {
     if (RES[name]) {
       const body = method === 'POST' || method === 'PUT' ? await readBody(req) : {};
       const hasil = crud(RES[name], method, id, q, body, ctx);
-      if (ctx.user.role === 'guru' && name === 'siswa') for (const r of Array.isArray(hasil) ? hasil : [hasil]) { delete r.nik; delete r.alamat; }   // data pribadi tidak perlu untuk guru
+      if (ctx.user.role === 'guru' && name === 'siswa') for (const r of Array.isArray(hasil) ? hasil : [hasil]) for (const k of SISWA_SENSITIF) delete r[k];   // data pribadi tidak perlu untuk guru
       return send(res, 200, hasil);
     }
     throw new HttpError(404, 'Endpoint tidak ditemukan');

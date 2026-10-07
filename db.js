@@ -128,6 +128,45 @@ const MIGRATIONS = [
    CREATE TABLE rapor_catatan (
      siswa_id INTEGER NOT NULL REFERENCES siswa(id) ON DELETE CASCADE, semester TEXT NOT NULL, kunci TEXT NOT NULL, nilai TEXT,
      PRIMARY KEY (siswa_id, semester, kunci));`,
+  // v9: data siswa lengkap (EMIS/Dapodik/MBG): identitas, orang tua, alamat, bantuan; NSM/NPSN lembaga
+  `ALTER TABLE siswa ADD COLUMN nisn TEXT;
+   ALTER TABLE siswa ADD COLUMN nis_lokal TEXT;
+   ALTER TABLE siswa ADD COLUMN no_kk TEXT;
+   ALTER TABLE siswa ADD COLUMN agama TEXT;
+   ALTER TABLE siswa ADD COLUMN jurusan TEXT;
+   ALTER TABLE siswa ADD COLUMN rt TEXT;
+   ALTER TABLE siswa ADD COLUMN rw TEXT;
+   ALTER TABLE siswa ADD COLUMN dusun TEXT;
+   ALTER TABLE siswa ADD COLUMN desa TEXT;
+   ALTER TABLE siswa ADD COLUMN kecamatan TEXT;
+   ALTER TABLE siswa ADD COLUMN kabupaten TEXT;
+   ALTER TABLE siswa ADD COLUMN kode_pos TEXT;
+   ALTER TABLE siswa ADD COLUMN jenis_tinggal TEXT;
+   ALTER TABLE siswa ADD COLUMN transportasi TEXT;
+   ALTER TABLE siswa ADD COLUMN email TEXT;
+   ALTER TABLE siswa ADD COLUMN nama_ayah TEXT;
+   ALTER TABLE siswa ADD COLUMN nik_ayah TEXT;
+   ALTER TABLE siswa ADD COLUMN lahir_ayah TEXT;
+   ALTER TABLE siswa ADD COLUMN pendidikan_ayah TEXT;
+   ALTER TABLE siswa ADD COLUMN pekerjaan_ayah TEXT;
+   ALTER TABLE siswa ADD COLUMN penghasilan_ayah TEXT;
+   ALTER TABLE siswa ADD COLUMN nama_ibu TEXT;
+   ALTER TABLE siswa ADD COLUMN nik_ibu TEXT;
+   ALTER TABLE siswa ADD COLUMN lahir_ibu TEXT;
+   ALTER TABLE siswa ADD COLUMN pendidikan_ibu TEXT;
+   ALTER TABLE siswa ADD COLUMN pekerjaan_ibu TEXT;
+   ALTER TABLE siswa ADD COLUMN penghasilan_ibu TEXT;
+   ALTER TABLE siswa ADD COLUMN kip_kemenag TEXT;
+   ALTER TABLE siswa ADD COLUMN kip_diknas TEXT;
+   ALTER TABLE siswa ADD COLUMN kps TEXT;
+   ALTER TABLE siswa ADD COLUMN pkh TEXT;
+   ALTER TABLE siswa ADD COLUMN sktm TEXT;
+   ALTER TABLE siswa ADD COLUMN mengulang INTEGER NOT NULL DEFAULT 0;
+   CREATE UNIQUE INDEX idx_siswa_nisn ON siswa(lembaga_id, nisn) WHERE nisn IS NOT NULL;
+   ALTER TABLE lembaga ADD COLUMN nsm TEXT;
+   ALTER TABLE lembaga ADD COLUMN npsn TEXT;
+   UPDATE lembaga SET nsm = '111235220242', npsn = '69854240' WHERE kode = 'MI';
+   UPDATE lembaga SET nsm = '101235220248' WHERE kode = 'RA';`,
 ];
 
 function migrate(db) {

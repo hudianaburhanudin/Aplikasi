@@ -850,3 +850,103 @@ test('rapor format Madin: mapel & KKM, huruf, rata-rata kelas, sikap, ketidakhad
   assert.strictEqual((await asmp('rapor-catatan', 'PUT', { siswa_id: a, semester: 'Ganjil', data: { sikap1: 'D' } })).status, 404);
   assert.strictEqual((await asmp(`rapor-catatan?siswa_id=${a}&semester=Ganjil`)).status, 404);
 });
+
+test('impor siswa dari Excel: By Name EMIS & Dapodik, pembaruan tanpa duplikat, ekspor By Name/SPPG', async (t) => {
+  const { buildXlsx } = require('./xlsx');
+  const { readXlsx } = require('./xlsx-read');
+  const { client } = await boot(t);
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [MI, SMP] = [id('MI'), id('SMP')];
+  const b64 = (buf) => buf.toString('base64');
+
+  // --- By Name By Address (judul pada baris 5 setelah judul-judul laporan, baris petunjuk "diisi ...") ---
+  const H = ['No', 'NIS Lokal (EMIS)', 'NISN', 'No Induk', 'Nama Siswa', 'Tempat Lahir', 'Tanggal Lahir', 'NIK Siswa', 'Nomor KK', 'Jenis Kelamin', 'Kelas', 'KIP KEMENAG', 'Nama Ayah', 'NIK Ayah', 'Nama Ibu', 'NIK Ibu', 'Alamat Siswa', 'Desa', 'Kecamatan', 'Kabupaten', 'NSM', 'Nama Madrasah', 'KKM / KECAMATAN', 'STATUS'];
+  const rows = [
+    ['urut', 'diisi nislokal', 'diisi nisn', 'diisi induk', 'diisi nama lengkap', 'diisi sesuai', 'diisi sesuai', 'diisi NIK', 'diisi KK', 'L/P', '1 / 2 / 3', '', 'diisi', '', '', '', 'diisi', 'desa', 'kec', 'kab', '', '', '', ''],
+    [1, '111235220242240001', '185976735', '0333', 'Abryzam Gaffar Alkalif', 'Bojonegoro', '14/1/2018', '3522021101210012', '3522021101210013', 'L', 1, '', 'Sugianto', '3522011503880003', 'Apriliani', '3522024104930002', 'Jawik RT/RW 02/01', 'Jawik', 'Tambakrejo', 'BOJONEGORO', '111235220242', 'MI MIFTAHUL ULUM', 'TAMBAKREJO', 'TIDAK MENGULANG'],
+    [2, '111235220242240002', '3174237254', '0334', 'Adiba Shakila Khoironi', 'Bojonegoro', '2017-10-30', '3522027010170001', '', 'P', 1, '', 'Imam', '', 'Yuliana Wati', '', 'Tambakrejo', 'Tambakrejo', 'Tambakrejo', 'BOJONEGORO', '', '', '', 'MENGULANG'],
+    [3, '', '', '0335', 'Ahmad Maulana', 'Bojonegoro', 'rusak', '', '', 'Laki-laki', 2, '', '', '', '', '', '', '', '', '', '', '', '', ''],
+  ];
+  const lapor = (n) => [['BY NAME BY ADDRESS SISWA'], ['MADRASAH IBTIDAIYAH'], ['SEMESTER GANJIL'], [], ...n];
+  // buildXlsx menulis baris judul = headers; susun judul laporan di atasnya lewat baris data
+  const berkas = buildXlsx('MI', ['BY NAME BY ADDRESS SISWA'], [['MADRASAH IBTIDAIYAH'], ['SEMESTER GANJIL'], [], H, ...rows]);
+  assert.strictEqual(readXlsx(berkas)[0].rows[4][4], 'Nama Siswa');
+
+  assert.strictEqual((await yys('siswa-impor', 'POST', { file: b64(berkas) })).status, 400);                 // pilih lembaga dulu
+  const pr = (await yys('siswa-impor', 'POST', { file: b64(berkas) }, MI)).data;
+  assert.deepStrictEqual([pr.disimpan, pr.total, pr.baru, pr.diperbarui], [false, 3, 3, 0]);
+  assert.deepStrictEqual(pr.kelas_baru.sort(), ['1', '2']);
+  assert.ok(pr.kolom_terbaca.includes('nik_ayah') && pr.kolom_terbaca.includes('nis_lokal'));
+  assert.ok(pr.peringatan.some((w) => /rusak/.test(w)));                                                       // tanggal tak dikenali
+  assert.strictEqual((await yys('siswa?q=Abryzam', 'GET', null, MI)).data.length, 0);                          // pratinjau tidak menyimpan
+  assert.strictEqual((await yys('siswa-impor', 'POST', { file: b64(berkas), simpan: true }, MI)).status, 400); // kelas belum ada, tidak dibuat otomatis
+  const sv = (await yys('siswa-impor', 'POST', { file: b64(berkas), simpan: true, buat_kelas: true, tahun_masuk: '2026/2027' }, MI)).data;
+  assert.deepStrictEqual([sv.disimpan, sv.baru], [true, 3]);
+  const a = (await yys('siswa?q=Abryzam', 'GET', null, MI)).data[0];
+  assert.deepStrictEqual([a.nisn, a.nis_lokal, a.nis, a.tgl_lahir, a.nik_ayah, a.kelas_nama, a.jk, a.mengulang, a.tahun_masuk, a.desa],
+    ['185976735', '111235220242240001', '0333', '2018-01-14', '3522011503880003', '1', 'L', 0, '2026/2027', 'Jawik']);
+  const b = (await yys('siswa?q=Adiba', 'GET', null, MI)).data[0];
+  assert.deepStrictEqual([b.tgl_lahir, b.mengulang, b.jk], ['2017-10-30', 1, 'P']);
+  assert.strictEqual((await yys('siswa?q=Maulana', 'GET', null, MI)).data[0].tgl_lahir, null);
+  // lembaga lain tidak melihatnya
+  assert.strictEqual((await yys('siswa?q=Abryzam', 'GET', null, SMP)).data.length, 0);
+
+  // impor ulang = perbarui, tidak menggandakan, dan tidak menghapus data yang tidak ada pada berkas
+  await yys(`siswa/${a.id}`, 'PUT', { telepon: '081200000000' });
+  const ulang = (await yys('siswa-impor', 'POST', { file: b64(berkas), simpan: true, buat_kelas: true }, MI)).data;
+  assert.deepStrictEqual([ulang.baru, ulang.diperbarui], [0, 3]);
+  assert.strictEqual((await yys('siswa', 'GET', null, MI)).data.length, 3);
+  assert.strictEqual((await yys(`siswa/${a.id}`)).data.telepon, '081200000000');
+
+  // --- Dapodik: judul dua baris (Data Ayah / Nama, Tahun Lahir, ...) ---
+  const g1 = ['No', 'Nama', 'NIPD', 'JK', 'NISN', 'Tempat Lahir', 'Tanggal Lahir', 'NIK', 'Agama', 'Alamat', 'RT', 'RW', 'Dusun', 'Kelurahan', 'Kecamatan', 'Kode Pos', 'Jenis Tinggal', 'HP', 'Data Ayah', '', '', '', 'Data Ibu', ''];
+  const g2 = ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Nama', 'Tahun Lahir', 'Pekerjaan', 'NIK', 'Nama', 'Pekerjaan'];
+  const dapo = buildXlsx('Daftar Peserta Didik', g1, [g2, [1, 'ABDUL AZIZ', '0018', 'L', '0104326026', 'BOJONEGORO', '2010-04-27', '3522022704100001', 'Islam', '-', '4', '2', 'NGLAMBANGAN', 'Desa/Kel. Jatimulyo', 'Kec. Tambakrejo', '62166', 'Pesantren', '085733115271', 'AHMAT', '1968', 'Petani', '3522022106800002', 'MUSTIYAH', 'Petani']]);
+  const d = (await yys('siswa-impor', 'POST', { file: b64(dapo), simpan: true }, SMP)).data;
+  assert.strictEqual(d.baru, 1);
+  const z = (await yys('siswa?q=AZIZ', 'GET', null, SMP)).data[0];
+  assert.deepStrictEqual([z.desa, z.kecamatan, z.rt, z.dusun, z.nama_ayah, z.lahir_ayah, z.pekerjaan_ayah, z.nik_ayah, z.nama_ibu, z.telepon, z.jenis_tinggal, z.alamat],
+    ['Jatimulyo', 'Tambakrejo', '4', 'NGLAMBANGAN', 'AHMAT', '1968', 'Petani', '3522022106800002', 'MUSTIYAH', '085733115271', 'Pesantren', null]);
+
+  // baris ganda: nama sama digabung, NIS sama dengan nama berbeda ditolak, tanpa pengenal dicocokkan lewat nama
+  const HH = ['Nama Siswa', 'No Induk', 'Kelas'];
+  const ganda = buildXlsx('X', HH, [['Budi Satu', '900', '3'], ['BUDI SATU', '900', '4'], ['Tanpa Id', '', '3']]);
+  const g = (await yys('siswa-impor', 'POST', { file: b64(ganda), simpan: true, buat_kelas: true }, MI)).data;
+  assert.deepStrictEqual([g.total, g.baru], [2, 2]);
+  assert.ok(g.peringatan.some((w) => /digabung/.test(w)));
+  assert.strictEqual((await yys('siswa?q=Budi Satu', 'GET', null, MI)).data[0].kelas_nama, '4');                 // baris belakangan menang
+  assert.strictEqual((await yys('siswa-impor', 'POST', { file: b64(ganda), simpan: true }, MI)).data.baru, 0);   // impor ulang: Tanpa Id tidak digandakan
+  const bentrok = buildXlsx('X', HH, [['Cici', '901', '3'], ['Dedi', '901', '3']]);
+  const bt = await yys('siswa-impor', 'POST', { file: b64(bentrok), simpan: true }, MI);
+  assert.strictEqual(bt.status, 400); assert.match(bt.data.error, /Baris \d+ dan \d+/);
+
+  // berkas rusak / bukan Excel / tanpa judul
+  assert.strictEqual((await yys('siswa-impor', 'POST', { file: b64(Buffer.from('bukan excel'.repeat(20))) }, MI)).status, 400);
+  assert.strictEqual((await yys('siswa-impor', 'POST', { file: b64(buildXlsx('X', ['a', 'b'], [[1, 2]])) }, MI)).status, 400);
+
+  // ekspor By Name (EMIS) & SPPG
+  await yys('lembaga/' + MI, 'PUT', { nsm: '111235220242' });
+  const ex = await yys('export/by-name', 'GET', null, MI);
+  assert.strictEqual(ex.status, 200);
+  const sh = readXlsx(ex.data)[0].rows;
+  assert.deepStrictEqual(sh[0].slice(0, 6), ['No', 'NIS Lokal (EMIS)', 'NISN', 'No Induk', 'Nama Siswa', 'Tempat Lahir']);
+  const baris = sh.find((r) => r[4] === 'Abryzam Gaffar Alkalif');
+  assert.deepStrictEqual([baris[2], baris[3], baris[9], baris[10], baris.at(-1)], ['185976735', '0333', 'L', '1', 'TIDAK MENGULANG']);
+  assert.ok(sh.some((r) => r.includes('111235220242') && r.includes('MI Miftahul Ulum')));
+  const sp = readXlsx((await yys('export/sppg', 'GET', null, MI)).data)[0].rows;
+  assert.deepStrictEqual(sp[0], ['NO', 'NISN', 'NAMA SISWA', 'UMUR', 'JENIS KELAMIN', 'KELAS', 'NAMA ORANG TUA / WALI']);
+  assert.match(sp[1][3], /^\d+ Thn \d+ Bln$/);
+  assert.strictEqual((await yys('export/siswa-lengkap', 'GET', null, MI)).status, 200);
+
+  // guru tidak boleh impor dan tidak melihat data pribadi
+  await yys('users', 'POST', { username: 'gurumi', password: 'rahasia123', nama: 'Guru MI', role: 'guru', lembaga_ids: [MI] });
+  const guru = client();
+  await guru('login', 'POST', { username: 'gurumi', password: 'rahasia123' });
+  await guru('password', 'POST', { lama: 'rahasia123', baru: 'rahasia456' });
+  assert.strictEqual((await guru('siswa-impor', 'POST', { file: b64(berkas) })).status, 403);
+  const gs = (await guru('siswa?q=Abryzam')).data[0];
+  assert.strictEqual(gs.nama, 'Abryzam Gaffar Alkalif');
+  for (const k of ['nik', 'no_kk', 'nik_ayah', 'nik_ibu', 'alamat', 'desa', 'kip_kemenag']) assert.ok(!(k in gs), k + ' tidak boleh terlihat guru');
+});

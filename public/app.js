@@ -42,6 +42,7 @@ const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toas
 function openForm(title, fields, values, onSave) {
   const f = $('#dlgForm');
   f.innerHTML = `<h3>${esc(title)}</h3><div class="fields">${fields.map((x) => {
+    if (x.section) return `<h4 class="full sec">${esc(x.section)}</h4>`;
     const v = values[x.name] ?? x.default ?? x.options?.find((o) => o.active)?.value ?? '';
     let input;
     if (x.type === 'checks') return `<fieldset class="full checks"><legend>${esc(x.label)}</legend>${x.options.map((o) =>
@@ -182,11 +183,53 @@ function crudPage(cfg) {
 }
 
 const pages = {};
+const siswaFilter = () => qs({ kelas_id: kelasFilter(), status: (document.querySelector('#main [data-f=status]') || {}).value });
+const b64 = (file) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => no(new Error('Berkas tidak dapat dibaca')); r.readAsDataURL(file); });
+const KOLOM_NAMA = { nama: 'Nama', nis: 'No Induk', nisn: 'NISN', nis_lokal: 'NIS Lokal', nik: 'NIK', no_kk: 'No KK', jk: 'L/P', tempat_lahir: 'Tempat lahir', tgl_lahir: 'Tgl lahir', kelas: 'Kelas', nama_ayah: 'Ayah', nama_ibu: 'Ibu', alamat: 'Alamat', desa: 'Desa', kecamatan: 'Kecamatan', kabupaten: 'Kabupaten', telepon: 'Telepon/HP', agama: 'Agama', status_ulang: 'Status mengulang', hp: 'HP', kode_pos: 'Kode pos', rt: 'RT', rw: 'RW', dusun: 'Dusun', jenis_tinggal: 'Jenis tinggal', transportasi: 'Transportasi', wali: 'Wali' };
+// Impor siswa dari Excel: pilih berkas -> pratinjau (tidak menyimpan) -> simpan
+function imporSiswa(load) {
+  let file = null, sheet = '';
+  const dlg = $('#dlg'), f = $('#dlgForm');
+  dlg.classList.add('wide');
+  const tampil = (r, pesan) => {
+    f.innerHTML = `<h3>Impor Siswa dari Excel</h3>
+      <p class="empty" style="text-align:left;padding:0">Mendukung berkas <b>By Name By Address</b> (EMIS Kemenag), <b>Daftar Peserta Didik Dapodik</b>, dan format rekap MBG/SPPG. Kolom dikenali dari judulnya. Siswa yang sudah ada (cocok NISN, NIS Lokal, NIK, No Induk, atau nama + tanggal lahir) <b>diperbarui</b>, bukan digandakan. Data tersimpan hanya di server Anda.</p>
+      <input type="file" id="impF" accept=".xlsx">
+      ${r ? `<div class="card"><b>Sheet:</b> <select id="impS">${r.sheets.map((x) => `<option ${x.name === r.sheet ? 'selected' : ''} value="${esc(x.name)}">${esc(x.name)} (${x.jumlah} siswa)</option>`).join('')}</select>
+        <p style="margin:8px 0"><b>${r.total}</b> siswa terbaca: <b>${r.baru}</b> baru, <b>${r.diperbarui}</b> diperbarui. Judul kolom pada baris ${r.baris_judul}.</p>
+        <p class="small">Kolom terbaca: ${r.kolom_terbaca.map((k) => esc(KOLOM_NAMA[k] || k)).join(', ')}.${r.kolom_diabaikan.length ? `<br>Diabaikan: ${r.kolom_diabaikan.slice(0, 12).map(esc).join(', ')}${r.kolom_diabaikan.length > 12 ? '…' : ''}` : ''}</p>
+        ${r.peringatan.length ? `<p class="small" style="color:var(--bad)">${r.peringatan.slice(0, 5).map(esc).join('<br>')}${r.peringatan.length > 5 ? `<br>… dan ${r.peringatan.length - 5} lainnya` : ''}</p>` : ''}
+        <div class="tablewrap"><table><thead><tr><th>Nama</th><th>NISN</th><th>Kelas</th><th>L/P</th><th>Tgl lahir</th></tr></thead><tbody>${r.contoh.map((x) => `<tr><td>${esc(x.nama)}</td><td>${esc(x.nisn || '')}</td><td>${esc(x.kelas || '')}</td><td>${esc(x.jk || '')}</td><td>${esc(x.tgl_lahir || '')}</td></tr>`).join('')}</tbody></table></div>
+        ${r.kelas_baru.length ? `<label class="chk"><input type="checkbox" id="impK" checked> Buat kelas yang belum ada: <b>${r.kelas_baru.map(esc).join(', ')}</b></label>` : ''}
+        <label>Tahun masuk untuk siswa baru (opsional) <input id="impT" placeholder="mis. 2026/2027"></label></div>` : ''}
+      <p class="error" id="formErr">${esc(pesan || '')}</p>
+      <div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button>${r ? '<button type="button" class="btn primary" id="impGo">Simpan ke database</button>' : ''}</div>`;
+    $('#cancelBtn').onclick = () => dlg.close();
+    f.onsubmit = (e) => e.preventDefault();
+    $('#impF').onchange = async (e) => { file = e.target.files[0]; sheet = ''; await baca(false); };
+    if (r) {
+      $('#impS').onchange = async (e) => { sheet = e.target.value; await baca(false); };
+      $('#impGo').onclick = () => baca(true);
+    }
+  };
+  const baca = async (simpan) => {
+    if (!file) return;
+    try {
+      $('#formErr').textContent = simpan ? 'Menyimpan…' : 'Membaca berkas…';
+      const body = { file: await b64(file), sheet, simpan };
+      if (simpan) { body.buat_kelas = !$('#impK') || $('#impK').checked; body.tahun_masuk = $('#impT').value; }
+      const r = await api('siswa-impor', { method: 'POST', body });
+      if (simpan) { dlg.close(); toast(`${r.baru} siswa baru, ${r.diperbarui} diperbarui`); load(); } else { tampil(r); }
+    } catch (err) { if ($('#formErr')) $('#formErr').textContent = err.message; else toast(err.message, true); }
+  };
+  tampil(null);
+  dlg.showModal();
+}
 pages.siswa = crudPage({
   key: 'siswa', title: 'Data Siswa', single: 'Siswa',
   filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas },
     { key: 'status', label: 'Semua status', def: 'aktif', load: async () => STATUS_SISWA.map((v) => ({ value: v, label: v })) }],
-  columns: [{ key: 'nis', label: 'NIS' }, { key: 'nama', label: 'Nama' }, { key: 'jk', label: 'L/P' },
+  columns: [{ key: 'nis', label: 'NIS' }, { key: 'nisn', label: 'NISN' }, { key: 'nama', label: 'Nama' }, { key: 'jk', label: 'L/P' },
     { key: 'kelas_nama', label: 'Kelas' }, { key: 'wali', label: 'Wali' }, { key: 'telepon', label: 'Telepon' },
     { label: 'Status', render: (r) => `<span class="badge">${esc(r.status)}</span>` }],
   rowActions: [{ name: 'wali', label: 'Akun wali', run: waliDialog }, { name: 'riwayat', label: 'Riwayat', run: guard(async (r) => {
@@ -194,13 +237,29 @@ pages.siswa = crudPage({
     showInfo('Riwayat ' + r.nama, h.length ? `<div class="tablewrap"><table><thead><tr><th>Tanggal</th><th>Jenis</th><th>Dari</th><th>Ke</th><th>Tahun</th></tr></thead><tbody>${h.map((m) =>
       `<tr><td>${esc(m.tanggal)}</td><td>${esc(m.jenis)}</td><td>${esc(m.dari_kelas)}</td><td>${esc(m.ke_kelas)}</td><td>${esc(m.tahun_ajaran)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Belum ada riwayat.</p>');
   }) }],
-  fields: [{ name: 'nis', label: 'NIS' }, { name: 'nama', label: 'Nama', required: true },
-    { name: 'jk', label: 'Jenis kelamin', options: JK }, { name: 'tempat_lahir', label: 'Tempat lahir' }, { name: 'tgl_lahir', label: 'Tanggal lahir', type: 'date' }, { name: 'nik', label: 'NIK' },
-    { name: 'kelas_id', label: 'Kelas', load: optKelas }, { name: 'status', label: 'Status', blank: false, default: 'aktif',
-      options: STATUS_SISWA.map((v) => ({ value: v, label: v })) },
-    { name: 'wali', label: 'Nama orang tua/wali' }, { name: 'telepon', label: 'Telepon' },
+  extra: [
+    { label: 'Impor Excel', run: (load) => imporSiswa(load) },
+    { label: '⬇ By Name (EMIS)', run: () => download('export/by-name?' + siswaFilter()) },
+    { label: '⬇ Format MBG/SPPG', run: () => download('export/sppg?' + siswaFilter()) },
+    { label: '⬇ Data lengkap', run: () => download('export/siswa-lengkap?' + siswaFilter()) }],
+  fields: [{ section: 'Identitas' },
+    { name: 'nama', label: 'Nama lengkap', required: true }, { name: 'jk', label: 'Jenis kelamin', options: JK },
+    { name: 'nis', label: 'No. Induk (NIS)' }, { name: 'nisn', label: 'NISN' }, { name: 'nis_lokal', label: 'NIS Lokal (EMIS)' }, { name: 'nik', label: 'NIK siswa' }, { name: 'no_kk', label: 'Nomor KK' },
+    { name: 'tempat_lahir', label: 'Tempat lahir' }, { name: 'tgl_lahir', label: 'Tanggal lahir', type: 'date' }, { name: 'agama', label: 'Agama' },
+    { name: 'kelas_id', label: 'Kelas', load: optKelas }, { name: 'jurusan', label: 'Jurusan (jika ada)' },
+    { name: 'status', label: 'Status', blank: false, default: 'aktif', options: STATUS_SISWA.map((v) => ({ value: v, label: v })) },
+    { name: 'mengulang', label: 'Mengulang kelas?', blank: false, default: 0, options: [{ value: 0, label: 'Tidak' }, { value: 1, label: 'Mengulang' }] },
     { name: 'tahun_masuk', label: 'Tahun masuk (mis. 2026/2027)' }, { name: 'tahun_lulus', label: 'Tahun lulus' },
-    { name: 'alamat', label: 'Alamat', type: 'textarea', full: true }],
+    { section: 'Orang tua / wali' },
+    { name: 'nama_ayah', label: 'Nama ayah' }, { name: 'nik_ayah', label: 'NIK ayah' }, { name: 'lahir_ayah', label: 'Tahun lahir ayah' }, { name: 'pendidikan_ayah', label: 'Pendidikan ayah' }, { name: 'pekerjaan_ayah', label: 'Pekerjaan ayah' }, { name: 'penghasilan_ayah', label: 'Penghasilan ayah' },
+    { name: 'nama_ibu', label: 'Nama ibu' }, { name: 'nik_ibu', label: 'NIK ibu' }, { name: 'lahir_ibu', label: 'Tahun lahir ibu' }, { name: 'pendidikan_ibu', label: 'Pendidikan ibu' }, { name: 'pekerjaan_ibu', label: 'Pekerjaan ibu' }, { name: 'penghasilan_ibu', label: 'Penghasilan ibu' },
+    { name: 'wali', label: 'Orang tua/wali yang dihubungi', full: true }, { name: 'telepon', label: 'Telepon / HP' }, { name: 'email', label: 'E-mail' },
+    { section: 'Alamat' },
+    { name: 'alamat', label: 'Alamat (jalan/dusun)', full: true }, { name: 'rt', label: 'RT' }, { name: 'rw', label: 'RW' }, { name: 'dusun', label: 'Dusun' },
+    { name: 'desa', label: 'Desa/Kelurahan' }, { name: 'kecamatan', label: 'Kecamatan' }, { name: 'kabupaten', label: 'Kabupaten/Kota' }, { name: 'kode_pos', label: 'Kode pos' },
+    { name: 'jenis_tinggal', label: 'Jenis tinggal (mis. Pesantren)' }, { name: 'transportasi', label: 'Alat transportasi' },
+    { section: 'Bantuan sosial (isi nomor kartu bila ada)' },
+    { name: 'kip_kemenag', label: 'KIP Kemenag' }, { name: 'kip_diknas', label: 'KIP Diknas' }, { name: 'kps', label: 'KPS' }, { name: 'pkh', label: 'PKH' }, { name: 'sktm', label: 'SKTM' }],
 });
 pages.guru = crudPage({
   key: 'guru', title: 'Data Guru', single: 'Guru',
@@ -252,6 +311,7 @@ pages.lembaga = crudPage({
   fields: [{ name: 'kode', label: 'Kode singkat', required: true }, { name: 'nama', label: 'Nama lembaga', required: true },
     { name: 'jenjang', label: 'Jenjang (isi Madin agar rapor memakai format Madin)' }, { name: 'telepon', label: 'Telepon' },
     { name: 'kepala', label: 'Nama kepala sekolah/madrasah (untuk tanda tangan rapor)', full: true },
+    { name: 'nsm', label: 'NSM (untuk file By Name EMIS)' }, { name: 'npsn', label: 'NPSN' },
     { name: 'ppdb_buka', label: 'Pendaftaran online (PPDB)', blank: false, default: 0, full: true, options: [{ value: 0, label: 'Ditutup' }, { value: 1, label: 'Dibuka' }] }, { name: 'alamat', label: 'Alamat', type: 'textarea', full: true }],
 });
 pages.tahun = crudPage({

@@ -26,6 +26,11 @@ Tanpa dependensi eksternal: Node.js (>= 22.13) + SQLite bawaan Node + frontend H
 - **Pelanggaran siswa**: jenis & poin per lembaga (bisa diubah admin), peringatan pada 50 dan 100 poin,
   tampil di aplikasi wali. Peran **Guru** hanya mengakses absensi dan pelanggaran.
 - **Siswa, Guru, Kelas**: tambah/ubah/hapus, pencarian, filter (NIS boleh sama antar lembaga)
+- **Data siswa lengkap** sesuai kebutuhan EMIS/Dapodik/MBG: NISN, NIS lokal, NIK, No. KK, orang tua (NIK, pendidikan, pekerjaan,
+  penghasilan), alamat rinci, KIP/KPS/PKH/SKTM, status mengulang; NSM/NPSN per lembaga. **Impor Excel** langsung dari berkas
+  By Name By Address, Daftar Peserta Didik Dapodik, atau rekap MBG/SPPG (kolom dikenali otomatis, pratinjau sebelum simpan,
+  siswa yang sudah ada diperbarui bukan digandakan). **Ekspor** format By Name By Address, rekap SPPG, dan data lengkap.
+  Guru tidak melihat NIK/KK/alamat/penghasilan/bantuan sosial.
 - **Absensi** harian per kelas + rekap bulanan
 - **Jadwal pelajaran** per kelas (baris tanpa kelas = berlaku untuk semua kelas), tampilan tabel hari × jam, **PDF**,
   impor massal CSV, dan tab **Jadwal** di aplikasi wali. Jadwal asli yayasan ada di `data/jadwal/` (MI semua kelas,
