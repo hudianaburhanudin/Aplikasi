@@ -43,6 +43,12 @@ Akun admin lembaga dan bendahara hanya dapat dibuat oleh Admin Yayasan. Wali mur
   siswa yang sudah ada diperbarui bukan digandakan). **Ekspor** format By Name By Address, rekap SPPG, dan data lengkap.
   Guru tidak melihat NIK/KK/alamat/penghasilan/bantuan sosial.
 - **Absensi** harian per kelas + rekap bulanan
+- **Susun Jadwal awal tahun pelajaran** (menu *Susun Jadwal*, per lembaga, Admin): 4 langkah - (1) hari belajar dan sesi harian
+  (pembuat sesi otomatis: jam masuk, durasi, istirahat; kegiatan tetap seperti upacara/Qiro'ah per hari), (2) mata pelajaran, jam per minggu,
+  guru, dan blok jam berurutan per kelas (input, salin antar kelas, atau impor Excel), (3) batas guru (hari libur, maksimal jam/hari),
+  (4) susun otomatis. Hasil tanpa bentrok guru/kelas, blok tidak melewati istirahat, mapel disebar antarhari; ditampilkan dulu per kelas,
+  bisa diulang dengan variasi lain, dan jam yang gagal ditata dilaporkan beserta sebabnya. Disimpan ke menu Jadwal (tidak menimpa tanpa persetujuan).
+  Menu Jadwal juga punya **Cek bentrok guru** untuk jadwal yang diubah manual. Batas: bentrok antarlembaga untuk guru yang sama belum diperiksa.
 - **Jadwal pelajaran** per kelas (baris tanpa kelas = berlaku untuk semua kelas), tampilan tabel hari × jam, **PDF**,
   impor massal CSV, dan tab **Jadwal** di aplikasi wali. Jadwal asli yayasan ada di `data/jadwal/` (MI semua kelas,
   SMK kelas X DKV, SMP kelas VII–IX; kode guru pada PDF sudah diganti nama) - impor lewat Jadwal → *Impor massal*.

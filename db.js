@@ -202,6 +202,13 @@ const MIGRATIONS = [
    CREATE INDEX idx_berkas_materi ON berkas(materi_id);
    CREATE INDEX idx_berkas_ujian ON berkas(ujian_id);
    ALTER TABLE soal ADD COLUMN gambar_id INTEGER;`,
+  // v13: penyusun jadwal awal tahun pelajaran - pengaturan hari/sesi, beban mengajar, batas guru
+  `CREATE TABLE jadwal_atur (lembaga_id INTEGER PRIMARY KEY REFERENCES lembaga(id), hari TEXT NOT NULL, sesi TEXT NOT NULL, maks_guru_hari INTEGER NOT NULL DEFAULT 6);
+   CREATE TABLE beban_ajar (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id), kelas_id INTEGER NOT NULL REFERENCES kelas(id) ON DELETE CASCADE,
+     mapel TEXT NOT NULL, jam INTEGER NOT NULL, guru_id INTEGER REFERENCES guru(id) ON DELETE SET NULL, blok INTEGER NOT NULL DEFAULT 1, UNIQUE (kelas_id, mapel));
+   CREATE INDEX idx_beban ON beban_ajar(lembaga_id, kelas_id);
+   CREATE TABLE guru_batas (guru_id INTEGER PRIMARY KEY REFERENCES guru(id) ON DELETE CASCADE, libur TEXT NOT NULL DEFAULT '', maks_hari INTEGER);`,
 ];
 
 function migrate(db) {

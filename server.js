@@ -9,6 +9,7 @@ const { backupNow, backupTerakhir, salinKeLuar } = require('./backup-lib');
 const { buildXlsx } = require('./xlsx');
 const { createUjian } = require('./ujian');
 const { createBerkas } = require('./berkas');
+const { susun, cariBentrok } = require('./penyusun');
 const { createImpor } = require('./impor');
 const { readXlsx } = require('./xlsx-read');
 const { parseSheet } = require('./siswa-impor');
@@ -133,6 +134,11 @@ const RES = {
     sel: `SELECT m.*, l.kode lembaga_kode, k.nama kelas_nama FROM materi m ${LJ}m.lembaga_id LEFT JOIN kelas k ON k.id = m.kelas_id`,
     search: ['m.judul', 'm.mapel', 'm.isi'], filters: { kelas_id: 'm.kelas_id' }, order: 'm.id DESC', scopeCol: 'm.lembaga_id', scopeKey: 'lembaga_id',
   },
+  beban_ajar: {
+    a: 'b', table: 'beban_ajar', cols: ['kelas_id', 'mapel', 'jam', 'guru_id', 'blok'], req: ['kelas_id', 'mapel', 'jam'], own: true,
+    sel: `SELECT b.*, l.kode lembaga_kode, k.nama kelas_nama, g.nama guru_nama FROM beban_ajar b ${LJ}b.lembaga_id LEFT JOIN kelas k ON k.id = b.kelas_id LEFT JOIN guru g ON g.id = b.guru_id`,
+    search: ['b.mapel', 'k.nama', 'g.nama'], filters: { kelas_id: 'b.kelas_id' }, order: 'l.id, k.nama, b.id', scopeCol: 'b.lembaga_id', scopeKey: 'lembaga_id',
+  },
   pembayaran: {
     a: 'p', table: 'pembayaran', cols: ['siswa_id', 'jenis', 'bulan', 'jumlah', 'tanggal', 'keterangan'], req: ['siswa_id', 'jumlah', 'tanggal'],
     sel: `SELECT p.*, s.lembaga_id, l.kode lembaga_kode, l.nama lembaga_nama, s.nama siswa_nama, s.nis, k.nama kelas_nama FROM pembayaran p
@@ -190,7 +196,7 @@ function hitungTurunan(r, i, today) {
   r.alamat_lengkap = [r.alamat, r.dusun && 'Dusun ' + r.dusun, (r.rt || r.rw) && `RT/RW ${r.rt || '-'}/${r.rw || '-'}`].filter(Boolean).join(', ');
   r.status_ulang = r.mengulang ? 'MENGULANG' : 'TIDAK MENGULANG';
 }
-const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin', 'hari', 'urut', 'kkm', 'mengulang', 'durasi', 'acak', 'tampil_nilai']);
+const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin', 'hari', 'urut', 'kkm', 'mengulang', 'durasi', 'acak', 'tampil_nilai', 'jam', 'blok']);
 const KENAIKAN = ['naik', 'lulus', 'pindah', 'keluar'];
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
@@ -203,7 +209,7 @@ const API_KEUANGAN = new Set(['pembayaran', 'tagihan', 'pengingat-tagihan']);
 const KEY_KEUANGAN = new Set(['pembayaran', 'tagihan', 'kuitansi']);       // ekspor/PDF keuangan
 const BENDAHARA_API = new Set(['me', 'logout', 'password', 'dashboard', 'pembayaran', 'tagihan', 'pengingat-tagihan', 'siswa', 'kelas', 'lembaga', 'tahun_ajaran', 'export', 'pdf', 'template', 'impor']);
 // jenis template/impor yang boleh dipakai tiap peran
-const JENIS_IMPOR = { guru: 'umum', nilai: 'umum', jadwal: 'umum', siswa: 'umum', soal: 'umum', pembayaran: 'keuangan' };
+const JENIS_IMPOR = { guru: 'umum', nilai: 'umum', jadwal: 'umum', siswa: 'umum', soal: 'umum', kurikulum: 'umum', pembayaran: 'keuangan' };
 const jenisBoleh = (role, jenis) => {
   const j = JENIS_IMPOR[jenis];
   if (!j) return false;
@@ -346,6 +352,10 @@ function createApp(dbFile, opts = {}) {
   function checkRefs(cfg, d, lembagaId, ctx) {
     if (cfg.table === 'siswa' && d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
     if (cfg.table === 'kelas' && d.wali_guru_id != null && lembagaOf('guru', d.wali_guru_id, ctx) !== lembagaId) throw new HttpError(400, 'Wali kelas berasal dari lembaga lain');
+    if (cfg.table === 'beban_ajar') {
+      if (d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
+      if (d.guru_id != null && lembagaOf('guru', d.guru_id, ctx) !== lembagaId) throw new HttpError(400, 'Guru berasal dari lembaga lain');
+    }
     if ((cfg.table === 'ujian' || cfg.table === 'materi') && d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
     if (cfg.table === 'jadwal' && d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
     if ((cfg.table === 'nilai' || cfg.table === 'pembayaran') && d.siswa_id != null) {
@@ -767,6 +777,7 @@ function createApp(dbFile, opts = {}) {
       if (cfg.table === 'jadwal') cekJadwal(d, null);
       if (cfg.table === 'ujian') { ujianSvc.cekUjian(d, null); d.dibuat_oleh = ctx.user.nama; }
       if (cfg.table === 'materi') { cekMateri(d); d.dibuat_oleh = ctx.user.nama; }
+      if (cfg.table === 'beban_ajar') cekBeban(d, null);
       checkRefs(cfg, d, lid, ctx);
       if (cfg.table === 'pendaftar') fillPendaftar(d, lid, 'admin');
       if (cfg.table === 'pengumuman') Object.assign(d, { dibuat_oleh: ctx.user.nama, tanggal: todayWib() });
@@ -787,6 +798,7 @@ function createApp(dbFile, opts = {}) {
       if (cfg.table === 'jadwal') cekJadwal(d, row);
       if (cfg.table === 'ujian') ujianSvc.cekUjian(d, row);
       if (cfg.table === 'materi') cekMateri(d);
+      if (cfg.table === 'beban_ajar') cekBeban(d, row);
       checkRefs(cfg, d, cfg.scopeKey ? row[cfg.scopeKey] : null, ctx);
       if (cfg.table === 'pelanggaran' && 'jenis_id' in d) fillPelanggaran({ ...d, siswa_id: row.siswa_id }, ctx, d);
       if (cfg.table === 'jenis_pelanggaran' && 'kode' in d) cekKodeJenis(d);
@@ -1014,6 +1026,111 @@ function createApp(dbFile, opts = {}) {
       return false;
     }
     return ctx.scope.ids.includes(b.lembaga_id);
+  }
+
+  // ---- penyusun jadwal awal tahun pelajaran ----
+  function cekBeban(d, row) {
+    const jamV = d.jam ?? (row && row.jam), blokV = d.blok ?? (row ? row.blok : 1) ?? 1;
+    if ('jam' in d && !(Number.isInteger(d.jam) && d.jam >= 1 && d.jam <= 20)) throw new HttpError(400, 'Jam per minggu harus 1-20');
+    if ('blok' in d && d.blok !== null && !(Number.isInteger(d.blok) && d.blok >= 1 && d.blok <= 4)) throw new HttpError(400, 'Blok jam berurutan harus 1-4');
+    if (jamV && blokV && blokV > jamV) throw new HttpError(400, 'Blok tidak boleh lebih besar dari jam per minggu');
+    if ('blok' in d && d.blok === null) d.blok = 1;
+    if ('mapel' in d && d.mapel) d.mapel = d.mapel.slice(0, 100);
+  }
+  const SESI_BAWAAN = [['07:00', '07:40', 'belajar'], ['07:40', '08:20', 'belajar'], ['08:20', '09:00', 'belajar'], ['09:00', '09:20', 'tetap', 'Istirahat'], ['09:20', '10:00', 'belajar'],
+    ['10:00', '10:40', 'belajar'], ['10:40', '11:20', 'belajar'], ['11:20', '11:40', 'tetap', 'Istirahat & Sholat'], ['11:40', '12:20', 'belajar'], ['12:20', '13:00', 'belajar']]
+    .map(([mulai, selesai, jenis, judul]) => ({ mulai, selesai, jenis, judul: judul || '' }));
+  function aturJadwal(method, body, ctx) {
+    const lid = ctx.scope.target; if (!lid) throw new HttpError(400, 'Pilih lembaga terlebih dahulu');
+    if (method === 'GET') {
+      const r = db.prepare('SELECT * FROM jadwal_atur WHERE lembaga_id = ?').get(lid);
+      return r ? { hari: r.hari.split(',').map(Number), sesi: JSON.parse(r.sesi), maks_guru_hari: r.maks_guru_hari, tersimpan: true }
+        : { hari: [1, 2, 3, 4, 5, 6], sesi: SESI_BAWAAN, maks_guru_hari: 6, tersimpan: false };
+    }
+    const hari = [...new Set((Array.isArray(body.hari) ? body.hari : []).map(Number))].sort();
+    if (!hari.length || hari.some((h) => !(Number.isInteger(h) && h >= 1 && h <= 7))) throw new HttpError(400, 'Pilih hari belajar (Senin-Ahad)');
+    const maks = Number(body.maks_guru_hari ?? 6);
+    if (!(Number.isInteger(maks) && maks >= 1 && maks <= 12)) throw new HttpError(400, 'Maksimal jam guru per hari 1-12');
+    const sesiIn = Array.isArray(body.sesi) ? body.sesi : [];
+    if (!sesiIn.length || sesiIn.length > 40) throw new HttpError(400, 'Isi sesi harian (1-40 baris)');
+    const sesi = sesiIn.map((x, i) => {
+      const mulai = jam(x.mulai), selesai = jam(x.selesai);
+      if (!mulai || !selesai || selesai <= mulai) throw new HttpError(400, `Sesi ${i + 1}: jam tidak valid`);
+      if (!['belajar', 'tetap'].includes(x.jenis)) throw new HttpError(400, `Sesi ${i + 1}: jenis harus belajar atau tetap`);
+      const h = (Array.isArray(x.hari) ? x.hari : []).map(Number).filter((n) => n >= 1 && n <= 7);
+      return { mulai, selesai, jenis: x.jenis, judul: String(x.judul || '').slice(0, 80), hari: h.length ? [...new Set(h)] : [] };
+    });
+    for (const d of hari) {
+      const l = sesi.filter((x) => !x.hari.length || x.hari.includes(d)).sort((a, b) => a.mulai.localeCompare(b.mulai));
+      for (let i = 1; i < l.length; i++) if (l[i].mulai < l[i - 1].selesai) throw new HttpError(400, `Sesi bertumpuk pada hari ${['', 'Senin', 'Selasa', 'Rabu', 'Kamis', "Jum'at", 'Sabtu', 'Ahad'][d]}: ${l[i - 1].mulai}-${l[i - 1].selesai} dan ${l[i].mulai}-${l[i].selesai}`);
+      if (!l.some((x) => x.jenis === 'belajar')) throw new HttpError(400, `Hari ${['', 'Senin', 'Selasa', 'Rabu', 'Kamis', "Jum'at", 'Sabtu', 'Ahad'][d]} tidak memiliki jam belajar`);
+    }
+    db.prepare('INSERT INTO jadwal_atur (lembaga_id, hari, sesi, maks_guru_hari) VALUES (?,?,?,?) ON CONFLICT (lembaga_id) DO UPDATE SET hari = excluded.hari, sesi = excluded.sesi, maks_guru_hari = excluded.maks_guru_hari')
+      .run(lid, hari.join(','), JSON.stringify(sesi), maks);
+    catat(ctx.user, 'atur_jadwal', `lembaga #${lid}: ${hari.length} hari, ${sesi.length} sesi`);
+    return { ok: true };
+  }
+  function guruBatas(method, body, ctx) {
+    if (method === 'GET') {
+      return db.prepare(`SELECT g.id guru_id, g.nama, g.mapel, l.kode lembaga_kode, COALESCE(b.libur, '') libur, b.maks_hari,
+        (SELECT COALESCE(SUM(x.jam), 0) FROM beban_ajar x WHERE x.guru_id = g.id) jam_minggu FROM guru g JOIN lembaga l ON l.id = g.lembaga_id LEFT JOIN guru_batas b ON b.guru_id = g.id
+        WHERE g.lembaga_id IN (${ph(ctx.scope.ids)}) ORDER BY l.id, g.nama`).all(...ctx.scope.ids).map((r) => ({ ...r, libur: r.libur ? r.libur.split(',').map(Number) : [] }));
+    }
+    lembagaOf('guru', Number(body.guru_id), ctx);
+    const libur = [...new Set((Array.isArray(body.libur) ? body.libur : []).map(Number).filter((n) => n >= 1 && n <= 7))].sort();
+    const maks = body.maks_hari === null || body.maks_hari === '' || body.maks_hari === undefined ? null : Number(body.maks_hari);
+    if (maks !== null && !(Number.isInteger(maks) && maks >= 1 && maks <= 12)) throw new HttpError(400, 'Maksimal jam per hari 1-12');
+    db.prepare('INSERT INTO guru_batas (guru_id, libur, maks_hari) VALUES (?,?,?) ON CONFLICT (guru_id) DO UPDATE SET libur = excluded.libur, maks_hari = excluded.maks_hari').run(Number(body.guru_id), libur.join(','), maks);
+    return { ok: true };
+  }
+  function bebanSalin(body, ctx) {
+    const dari = Number(body.dari_kelas_id), lid = lembagaOf('kelas', dari, ctx);
+    const ke = [...new Set((Array.isArray(body.ke_kelas_ids) ? body.ke_kelas_ids : []).map(Number))].filter((k) => k !== dari);
+    if (!ke.length) throw new HttpError(400, 'Pilih kelas tujuan');
+    for (const k of ke) if (lembagaOf('kelas', k, ctx) !== lid) throw new HttpError(400, 'Kelas tujuan berasal dari lembaga lain');
+    const sumber = db.prepare('SELECT mapel, jam, guru_id, blok FROM beban_ajar WHERE kelas_id = ?').all(dari);
+    if (!sumber.length) throw new HttpError(400, 'Kelas asal belum punya beban mengajar');
+    let n = 0;
+    db.exec('BEGIN');
+    try {
+      for (const k of ke) for (const b of sumber) n += Number(db.prepare('INSERT OR IGNORE INTO beban_ajar (lembaga_id, kelas_id, mapel, jam, guru_id, blok) VALUES (?,?,?,?,?,?)').run(lid, k, b.mapel, b.jam, body.tanpa_guru ? null : b.guru_id, b.blok).changes);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { ok: true, ditambah: n };
+  }
+  function susunJadwal(body, ctx) {
+    const lid = ctx.scope.target; if (!lid) throw new HttpError(400, 'Pilih lembaga terlebih dahulu');
+    const atur = aturJadwal('GET', {}, ctx);
+    let kelasRows = db.prepare('SELECT id, nama FROM kelas WHERE lembaga_id = ? ORDER BY nama').all(lid);
+    if (Array.isArray(body.kelas_ids) && body.kelas_ids.length) { const set = new Set(body.kelas_ids.map(Number)); kelasRows = kelasRows.filter((k) => set.has(k.id)); }
+    const guruRows = db.prepare('SELECT g.id, g.nama, b.libur, b.maks_hari FROM guru g LEFT JOIN guru_batas b ON b.guru_id = g.id WHERE g.lembaga_id = ?').all(lid);
+    const guru = Object.fromEntries(guruRows.map((g) => [g.id, { nama: g.nama, libur: new Set((g.libur || '').split(',').filter(Boolean).map(Number)), maks: g.maks_hari || 0 }]));
+    const kelas = kelasRows.map((k) => ({ ...k, beban: db.prepare('SELECT mapel, jam, guru_id, blok FROM beban_ajar WHERE kelas_id = ? ORDER BY id').all(k.id) })).filter((k) => k.beban.length);
+    if (!kelas.length) throw new HttpError(400, 'Belum ada beban mengajar. Isi dulu mata pelajaran dan jam per minggu tiap kelas.');
+    const hasil = susun({ hari: atur.hari, sesi: atur.sesi, kelas, guru, maksGuruHari: atur.maks_guru_hari, benih: Number(body.benih) || 1, percobaan: Math.min(200, Number(body.percobaan) || 60) });
+    const namaKelas = Object.fromEntries(kelasRows.map((k) => [k.id, k.nama]));
+    const rows = [...hasil.rows.map((r) => ({ ...r, kelas_nama: namaKelas[r.kelas_id], guru: r.guru_id ? guru[r.guru_id].nama : null })), ...hasil.tetap.map((r) => ({ ...r, kelas_nama: null, guru: null }))];
+    const ringkas = { kelas: kelas.length, jam_total: hasil.jamTotal, jam_tertata: hasil.jamTotal - hasil.jamGagal, belum: hasil.belum, percobaan: hasil.percobaan, simpan: false,
+      beban_guru: Object.entries(hasil.bebanGuru).map(([id, n]) => ({ guru: guru[id].nama, jam: n })).sort((a, b) => b.jam - a.jam),
+      per_kelas: kelas.map((k) => ({ kelas_id: k.id, kelas: k.nama, rows: rows.filter((r) => r.kelas_id === k.id || r.kelas_id === null).map(({ kelas_id, hari, mulai, selesai, judul, guru: g }) => ({ kelas_id, hari, mulai, selesai, judul, guru: g })) })) };
+    if (!body.simpan) return ringkas;
+    if (hasil.belum.length && !body.paksa) throw new HttpError(409, `${hasil.jamGagal} jam belum tertata. Perbaiki dulu, atau pilih "simpan walau belum lengkap".`);
+    const id = kelas.map((k) => k.id), ada = db.prepare(`SELECT COUNT(*) n FROM jadwal WHERE lembaga_id = ? AND (kelas_id IS NULL OR kelas_id IN (${ph(id)}))`).get(lid, ...id).n;
+    if (ada && !body.ganti) throw new HttpError(409, `Sudah ada ${ada} baris jadwal untuk kelas ini. Centang "ganti jadwal lama" untuk menimpanya.`);
+    db.exec('BEGIN');
+    try {
+      db.prepare(`DELETE FROM jadwal WHERE lembaga_id = ? AND (kelas_id IS NULL OR kelas_id IN (${ph(id)}))`).run(lid, ...id);
+      const ins = db.prepare('INSERT INTO jadwal (lembaga_id, kelas_id, hari, mulai, selesai, judul, guru) VALUES (?,?,?,?,?,?,?)');
+      for (const r of rows) ins.run(lid, r.kelas_id, r.hari, r.mulai, r.selesai, r.judul, r.guru);
+      catat(ctx.user, 'susun_jadwal', `${rows.length} baris untuk ${kelas.length} kelas, lembaga #${lid}${ada ? `, mengganti ${ada} baris lama` : ''}`);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { ...ringkas, simpan: true, baris: rows.length };
+  }
+  function bentrokJadwal(ctx) {
+    const rows = db.prepare(`SELECT j.kelas_id, j.hari, j.mulai, j.selesai, j.judul, j.guru, k.nama kelas_nama FROM jadwal j LEFT JOIN kelas k ON k.id = j.kelas_id
+      WHERE j.lembaga_id IN (${ph(ctx.scope.ids)}) AND j.guru IS NOT NULL`).all(...ctx.scope.ids);
+    return cariBentrok(rows);
   }
 
   // ---- jadwal pelajaran ----
@@ -1599,6 +1716,17 @@ function createApp(dbFile, opts = {}) {
       }
       throw new HttpError(405, 'Metode tidak didukung');
     }
+    if (name === 'jadwal-atur') {
+      if (method === 'PUT' && !['yayasan', 'admin'].includes(ctx.user.role)) throw new HttpError(403, 'Hanya admin yang dapat mengatur sesi jadwal');
+      return send(res, 200, aturJadwal(method === 'PUT' ? 'PUT' : 'GET', method === 'PUT' ? await readBody(req) : {}, ctx));
+    }
+    if (name === 'jadwal-susun' && method === 'POST') {
+      if (!['yayasan', 'admin'].includes(ctx.user.role)) throw new HttpError(403, 'Hanya admin yang dapat menyusun jadwal');
+      return send(res, 200, susunJadwal(await readBody(req), ctx));
+    }
+    if (name === 'guru-batas') return send(res, 200, guruBatas(method === 'PUT' ? 'PUT' : 'GET', method === 'PUT' ? await readBody(req) : {}, ctx));
+    if (name === 'beban-salin' && method === 'POST') return send(res, 200, bebanSalin(await readBody(req), ctx));
+    if (name === 'jadwal-bentrok') return send(res, 200, bentrokJadwal(ctx));
     if (name === 'jadwal-kelas') return send(res, 200, jadwalKelas(q, ctx));
     if (name === 'jadwal-impor' && method === 'POST') {
       if (ctx.user.role === 'guru') throw new HttpError(403, 'Akses ditolak');

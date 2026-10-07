@@ -639,6 +639,10 @@ pages.jadwal = crudPage({
       showInfo(`Jadwal kelas ${d.kelas.nama} · ${d.kelas.lembaga_nama}`, jadwalGrid(d.rows), true);
     }) },
     { label: '⬇ PDF', run: () => { const k = kelasFilter(); if (!k) return toast('Pilih kelas dulu', true); download('pdf/jadwal?' + qs({ kelas_id: k })); } },
+    { label: 'Cek bentrok guru', run: guard(async () => {
+      const b = await api('jadwal-bentrok');
+      showInfo('Pemeriksaan bentrok guru', b.length ? `<p class="error">${b.length} bentrok ditemukan (guru yang sama mengajar dua kelas pada waktu beririsan):</p><div class="tablewrap"><table><thead><tr><th>Guru</th><th>Hari</th><th>Kelas / mapel / waktu</th></tr></thead><tbody>${b.map((x) => `<tr><td>${esc(x.guru)}</td><td>${HARI[x.hari]}</td><td>${esc(x.a.kelas)} · ${esc(x.a.mapel)} · ${esc(x.a.waktu)}<br>${esc(x.b.kelas)} · ${esc(x.b.mapel)} · ${esc(x.b.waktu)}</td></tr>`).join('')}</tbody></table></div>` : '<p>✅ Tidak ada bentrok guru pada jadwal yang tersimpan.</p><p class="small muted">Pemeriksaan membandingkan nama guru yang sama pada waktu yang beririsan di kelas berbeda dalam satu lembaga.</p>', true);
+    }) },
     { label: 'Impor massal', run: (load) => {
       openForm('Impor Jadwal', [
         { name: 'text', label: 'Tempel data (kelas;hari;mulai;selesai;judul;guru) atau pilih file CSV di atas', type: 'textarea', rows: 10, full: true, required: true },
@@ -858,6 +862,128 @@ pages.ujian = crudPage({
     { name: 'petunjuk', label: 'Petunjuk pengerjaan (opsional)', type: 'textarea', full: true }],
 });
 
+// ---- penyusun jadwal awal tahun pelajaran ----
+const HARI_PENDEK = ['', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Ahd'];
+const parseHariTeks = (t) => { const x = String(t || '').trim().toLowerCase(); if (!x || x === 'semua') return []; return x.split(/[,\s]+/).map((v) => { const i = HARI.findIndex((h) => h && (h.toLowerCase().startsWith(v.slice(0, 3)) || String(HARI.indexOf(h)) === v)); return i > 0 ? i : Number(v); }).filter((n) => n >= 1 && n <= 7); };
+pages.penyusun = guard(async () => {
+  if (scope === 'all') { $('#main').innerHTML = '<h2>Susun Jadwal</h2><div class="empty">Pilih satu lembaga di pojok kiri atas terlebih dahulu. Jadwal disusun per lembaga.</div>'; return; }
+  let tab = (location.hash.split('?t=')[1]) || 'atur', atur = null, hasil = null, benih = 1;
+  const tabs = [['atur', '1. Hari & jam'], ['beban', '2. Mata pelajaran & guru'], ['guru', '3. Batas guru'], ['susun', '4. Susun & simpan']];
+  $('#main').innerHTML = `<h2>Susun Jadwal Awal Tahun Pelajaran</h2>
+    <p class="empty" style="text-align:left;padding:0 0 8px">Isi empat langkah berikut, lalu aplikasi menyusun jadwal semua kelas tanpa bentrok guru dan kelas. Hasilnya bisa dilihat dulu, diulang dengan variasi lain, dan baru disimpan ke menu Jadwal (yang tetap bisa diubah manual).</p>
+    <div class="bar" id="tabbar">${tabs.map(([k, l]) => `<button class="btn" data-t="${k}">${l}</button>`).join('')}</div><div id="pane"></div>`;
+  const pane = $('#pane');
+  const tampil = (k) => { tab = k; document.querySelectorAll('#tabbar button').forEach((b) => { b.classList.toggle('primary', b.dataset.t === k); }); ({ atur: vAtur, beban: vBeban, guru: vGuru, susun: vSusun })[k](); };
+  // --- 1. hari & jam ---
+  const vAtur = guard(async () => {
+    atur = atur || await api('jadwal-atur');
+    const baris = (x, i) => `<tr data-i="${i}"><td><input class="m" value="${esc(x.mulai)}" style="width:80px"></td><td><input class="e" value="${esc(x.selesai)}" style="width:80px"></td>
+      <td><select class="j"><option value="belajar" ${x.jenis === 'belajar' ? 'selected' : ''}>Jam pelajaran</option><option value="tetap" ${x.jenis === 'tetap' ? 'selected' : ''}>Kegiatan tetap (istirahat, upacara, ...)</option></select></td>
+      <td><input class="t" value="${esc(x.judul || '')}" placeholder="nama kegiatan" style="min-width:140px"></td><td><input class="h" value="${esc((x.hari || []).map((n) => HARI[n]).join(', ') || 'semua')}" style="width:130px"></td><td><button type="button" class="btn small danger" data-del="${i}">×</button></td></tr>`;
+    pane.innerHTML = `<div class="card"><b>Hari belajar</b><div class="bar" id="hari">${[1, 2, 3, 4, 5, 6, 7].map((h) => `<label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" value="${h}" ${atur.hari.includes(h) ? 'checked' : ''} style="width:auto"> ${HARI[h]}</label>`).join(' ')}</div>
+      <label style="display:inline-block;margin-top:6px">Maksimal jam mengajar guru per hari <input id="maks" type="number" min="1" max="12" value="${atur.maks_guru_hari}" style="width:80px"></label></div>
+      <div class="card"><b>Pembuat sesi otomatis</b><p class="small muted">Isi lalu tekan <b>Buat sesi</b> untuk mengisi tabel di bawah; setelah itu masih bisa diubah.</p>
+        <div class="bar"><label>Masuk <input id="g_masuk" value="07:00" style="width:80px"></label><label>Durasi 1 jam (menit) <input id="g_dur" type="number" value="40" style="width:80px"></label><label>Jumlah jam <input id="g_n" type="number" value="8" style="width:70px"></label>
+          <label>Istirahat setelah jam ke- <input id="g_ist" value="3,6" style="width:80px"></label><label>Lama istirahat (menit) <input id="g_ld" type="number" value="20" style="width:80px"></label><button type="button" class="btn" id="g_buat">Buat sesi</button></div></div>
+      <div class="card"><b>Sesi harian</b><p class="small muted">"Hari berlaku" diisi <i>semua</i> atau nama hari dipisah koma (mis. <i>Senin</i> untuk upacara, <i>Senin, Selasa</i>). Jam pelajaran dipakai untuk mata pelajaran; kegiatan tetap tampil sama di semua kelas.</p>
+        <div class="tablewrap"><table><thead><tr><th>Mulai</th><th>Selesai</th><th>Jenis</th><th>Kegiatan</th><th>Hari berlaku</th><th></th></tr></thead><tbody id="sesi">${atur.sesi.map(baris).join('')}</tbody></table></div>
+        <div class="bar"><button type="button" class="btn" id="tambahSesi">+ Tambah baris</button></div></div>
+      <p class="error" id="formErr"></p><div class="bar"><button type="button" class="btn primary" id="simpanAtur">Simpan dan lanjut</button></div>`;
+    const baca = () => ({ hari: [...$('#hari').querySelectorAll('input:checked')].map((i) => Number(i.value)), maks_guru_hari: Number($('#maks').value),
+      sesi: [...$('#sesi').querySelectorAll('tr')].map((tr) => ({ mulai: tr.querySelector('.m').value, selesai: tr.querySelector('.e').value, jenis: tr.querySelector('.j').value, judul: tr.querySelector('.t').value, hari: parseHariTeks(tr.querySelector('.h').value) })) });
+    const sinkron = () => { atur = { ...atur, ...baca() }; };
+    $('#tambahSesi').onclick = () => { sinkron(); atur.sesi.push({ mulai: '', selesai: '', jenis: 'belajar', judul: '', hari: [] }); vAtur(); };
+    pane.querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => { sinkron(); atur.sesi.splice(Number(b.dataset.del), 1); vAtur(); }; });
+    $('#g_buat').onclick = () => {
+      sinkron();
+      const mnt = (t) => { const [h, m] = t.split(/[.:]/).map(Number); return h * 60 + (m || 0); }, fm = (n) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+      const dur = Number($('#g_dur').value), n = Number($('#g_n').value), ist = $('#g_ist').value.split(',').map((x) => Number(x.trim())).filter(Boolean), ld = Number($('#g_ld').value);
+      if (!(dur > 0 && n > 0)) return toast('Isi durasi dan jumlah jam', true);
+      let t = mnt($('#g_masuk').value); const out = [];
+      for (let i = 1; i <= n; i++) { out.push({ mulai: fm(t), selesai: fm(t + dur), jenis: 'belajar', judul: '', hari: [] }); t += dur; if (ist.includes(i) && i < n) { out.push({ mulai: fm(t), selesai: fm(t + ld), jenis: 'tetap', judul: 'Istirahat', hari: [] }); t += ld; } }
+      atur.sesi = out; vAtur();
+    };
+    $('#simpanAtur').onclick = async () => { try { sinkron(); await api('jadwal-atur', { method: 'PUT', body: { hari: atur.hari, sesi: atur.sesi, maks_guru_hari: atur.maks_guru_hari } }); atur = null; toast('Pengaturan tersimpan'); tampil('beban'); } catch (e) { $('#formErr').textContent = e.message; } };
+  });
+  // --- 2. beban mengajar ---
+  const vBeban = guard(async () => {
+    const [kelas, guru] = await Promise.all([api('kelas'), api('guru')]);
+    atur = atur || await api('jadwal-atur');
+    const perHari = Math.max(...atur.hari.map((d) => atur.sesi.filter((x) => x.jenis === 'belajar' && (!x.hari.length || x.hari.includes(d))).length), 0);
+    const kapasitas = atur.hari.reduce((a, d) => a + atur.sesi.filter((x) => x.jenis === 'belajar' && (!x.hari.length || x.hari.includes(d))).length, 0);
+    const sel = $('#kb') ? $('#kb').value : (kelas[0] || {}).id;
+    pane.innerHTML = `<div class="bar"><select id="kb">${kelas.map((k) => `<option value="${k.id}" ${String(k.id) === String(sel) ? 'selected' : ''}>${esc(k.nama)}</option>`).join('')}</select><span class="grow"></span>
+      <button class="btn" id="bSalin">Salin ke kelas lain</button><button class="btn" id="bImpor">Impor Excel</button><button class="btn" id="bTpl">⬇ Template</button><button class="btn primary" id="bTambah">+ Tambah mapel</button></div><div class="tablewrap" id="btbl"></div><p class="small muted" id="bfoot"></p>`;
+    const muat = guard(async () => {
+      const rows = await api('beban_ajar?' + qs({ kelas_id: $('#kb').value }));
+      const total = rows.reduce((a, r) => a + r.jam, 0);
+      $('#btbl').innerHTML = rows.length ? `<table><thead><tr><th>Mata pelajaran</th><th>Jam/minggu</th><th>Guru</th><th>Blok</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.mapel)}</td><td>${r.jam}</td><td>${esc(r.guru_nama || '-')}</td><td>${r.blok > 1 ? r.blok + ' jam berurutan' : '-'}</td>
+        <td class="act"><button class="btn small" data-e="${r.id}">Ubah</button> <button class="btn small danger" data-d="${r.id}">Hapus</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada mata pelajaran untuk kelas ini. Tambah satu per satu, impor Excel, atau salin dari kelas lain.</div>';
+      $('#bfoot').innerHTML = `Total <b>${total}</b> jam/minggu · jam belajar tersedia per kelas <b>${kapasitas}</b> (${atur.hari.length} hari, maksimal ${perHari} jam/hari)${total > kapasitas ? ' · <b style="color:var(--bad)">melebihi jam tersedia</b>' : ''}`;
+      $('#btbl').onclick = guard(async (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        if (b.dataset.d) { if (!confirm('Hapus mata pelajaran ini dari kelas?')) return; await api('beban_ajar/' + b.dataset.d, { method: 'DELETE' }); return muat(); }
+        form(rows.find((r) => r.id === Number(b.dataset.e)));
+      });
+    });
+    const form = (row) => openForm(row ? 'Ubah mata pelajaran' : 'Tambah mata pelajaran', [
+      { name: 'mapel', label: 'Mata pelajaran', required: true, full: true }, { name: 'jam', label: 'Jam per minggu', type: 'number', required: true, default: 2 },
+      { name: 'blok', label: 'Dipasang berurutan (blok)', blank: false, default: 1, options: [1, 2, 3, 4].map((n) => ({ value: n, label: n === 1 ? '1 jam (boleh terpisah)' : `${n} jam berurutan` })) },
+      { name: 'guru_id', label: 'Guru pengajar', full: true, options: guru.map((g) => ({ value: g.id, label: g.nama + (g.mapel ? ` (${g.mapel})` : '') })) }],
+      row || {}, async (d) => { await api(row ? 'beban_ajar/' + row.id : 'beban_ajar', { method: row ? 'PUT' : 'POST', body: { ...d, kelas_id: row ? undefined : Number($('#kb').value) } }); toast('Tersimpan'); muat(); });
+    $('#bTambah').onclick = () => form(); $('#kb').onchange = muat; $('#bTpl').onclick = () => download('template/kurikulum');
+    $('#bImpor').onclick = () => imporExcel('kurikulum', 'Beban Mengajar', muat);
+    $('#bSalin').onclick = () => openForm('Salin beban mengajar ke kelas lain', [{ name: 'ke_kelas_ids', label: 'Kelas tujuan (yang sudah punya mapel sama dilewati)', type: 'checks', options: kelas.filter((k) => String(k.id) !== $('#kb').value).map((k) => ({ value: k.id, label: k.nama })) },
+      { name: 'tanpa_guru', label: 'Guru', blank: false, default: 0, options: [{ value: 0, label: 'Ikut disalin' }, { value: 1, label: 'Kosongkan (diisi manual)' }] }], {},
+      async (d) => { const r = await api('beban-salin', { method: 'POST', body: { dari_kelas_id: Number($('#kb').value), ke_kelas_ids: d.ke_kelas_ids, tanpa_guru: d.tanpa_guru === '1' } }); toast(`${r.ditambah} baris ditambahkan`); });
+    muat();
+  });
+  // --- 3. batas guru ---
+  const vGuru = guard(async () => {
+    atur = atur || await api('jadwal-atur');
+    const rows = await api('guru-batas');
+    pane.innerHTML = `<p class="small muted">Beri tanda hari ketika guru <b>tidak bisa</b> mengajar, dan (opsional) batas jam mengajar per hari untuk guru tertentu. Perubahan tersimpan otomatis. Kosongkan jika tidak ada batasan.</p>
+      <div class="tablewrap"><table><thead><tr><th>Guru</th><th>Jam/minggu</th>${atur.hari.map((h) => `<th>Libur ${HARI_PENDEK[h]}</th>`).join('')}<th>Maks jam/hari</th></tr></thead><tbody>${rows.map((g) => `<tr data-g="${g.guru_id}"><td>${esc(g.nama)}<div class="small muted">${esc(g.mapel || '')}</div></td><td>${g.jam_minggu}</td>
+        ${atur.hari.map((h) => `<td><input type="checkbox" data-h="${h}" ${g.libur.includes(h) ? 'checked' : ''} style="width:auto"></td>`).join('')}<td><input type="number" min="1" max="12" class="mk" value="${g.maks_hari ?? ''}" placeholder="${atur.maks_guru_hari}" style="width:80px"></td></tr>`).join('') || `<tr><td colspan="9" class="empty">Belum ada guru. Tambahkan di menu Guru.</td></tr>`}</tbody></table></div>`;
+    pane.querySelectorAll('tr[data-g]').forEach((tr) => {
+      const simpan = guard(async () => { await api('guru-batas', { method: 'PUT', body: { guru_id: Number(tr.dataset.g), libur: [...tr.querySelectorAll('[data-h]:checked')].map((i) => Number(i.dataset.h)), maks_hari: tr.querySelector('.mk').value } }); toast('Tersimpan'); });
+      tr.querySelectorAll('input').forEach((i) => { i.onchange = simpan; });
+    });
+  });
+  // --- 4. susun & simpan ---
+  const vSusun = guard(async () => {
+    const kelas = await api('kelas');
+    pane.innerHTML = `<div class="card"><div class="bar"><button class="btn primary" id="sSusun">⚡ Susun jadwal otomatis</button><button class="btn" id="sUlang" disabled>↻ Susun ulang (variasi lain)</button><span class="grow"></span></div>
+      <details style="margin-top:6px"><summary class="small">Hanya kelas tertentu</summary><div class="bar" id="skelas">${kelas.map((k) => `<label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" value="${k.id}" checked style="width:auto"> ${esc(k.nama)}</label>`).join(' ')}</div></details></div><div id="shasil"></div>`;
+    const kelasDipilih = () => { const c = [...$('#skelas').querySelectorAll('input:checked')].map((i) => Number(i.value)); return c.length === kelas.length ? undefined : c; };
+    const jalan = guard(async () => {
+      hasil = await api('jadwal-susun', { method: 'POST', body: { simpan: false, benih, kelas_ids: kelasDipilih() } });
+      $('#sUlang').disabled = false; render();
+    });
+    const render = () => {
+      const h = hasil, sempurna = !h.belum.length;
+      $('#shasil').innerHTML = `<div class="stats"><div class="card stat"><div class="n">${h.jam_tertata}/${h.jam_total}</div><div class="l">jam pelajaran tertata</div></div><div class="card stat"><div class="n">${h.kelas}</div><div class="l">kelas</div></div>
+        <div class="card stat"><div class="n" style="color:${sempurna ? 'var(--ok)' : 'var(--bad)'}">${sempurna ? 'Lengkap' : h.belum.length + ' masalah'}</div><div class="l">${sempurna ? 'tanpa bentrok' : 'perlu diperbaiki'}</div></div></div>
+        ${h.belum.length ? `<div class="card"><b>Belum bisa ditata</b><div class="tablewrap"><table><thead><tr><th>Kelas</th><th>Mapel</th><th>Jam</th><th>Sebab</th></tr></thead><tbody>${h.belum.map((b) => `<tr><td>${esc(b.kelas)}</td><td>${esc(b.mapel)}</td><td>${b.jam}</td><td>${esc(b.alasan)}</td></tr>`).join('')}</tbody></table></div><p class="small muted">Perbaiki di langkah 1-3 (tambah hari/jam, kurangi blok atau beban, longgarkan batas guru) lalu susun lagi.</p></div>` : ''}
+        <div class="card"><div class="bar"><select id="sk">${h.per_kelas.map((k, i) => `<option value="${i}">Kelas ${esc(k.kelas)}</option>`).join('')}</select></div><div id="sgrid"></div></div>
+        <div class="card"><b>Beban mengajar guru (jam/minggu)</b><div class="small" style="margin-top:6px">${h.beban_guru.map((g) => `${esc(g.guru)}: <b>${g.jam}</b>`).join(' · ') || '-'}</div></div>
+        <div class="card"><label class="chk"><input type="checkbox" id="sGanti"> Ganti jadwal lama pada kelas yang disusun (menghapus jadwal yang sudah ada untuk kelas ini)</label>
+          ${sempurna ? '' : '<label class="chk"><input type="checkbox" id="sPaksa"> Simpan walau belum lengkap (jam yang belum tertata diisi manual nanti)</label>'}
+          <p class="error" id="formErr"></p><div class="bar"><button class="btn primary" id="sSimpan">Simpan sebagai jadwal</button></div></div>`;
+      const gambar = () => { $('#sgrid').innerHTML = jadwalGrid(h.per_kelas[Number($('#sk').value)].rows); }; $('#sk').onchange = gambar; gambar();
+      $('#sSimpan').onclick = async () => {
+        try {
+          const r = await api('jadwal-susun', { method: 'POST', body: { simpan: true, benih, kelas_ids: kelasDipilih(), ganti: $('#sGanti').checked, paksa: !!($('#sPaksa') || {}).checked } });
+          toast(`${r.baris} baris jadwal tersimpan`); location.hash = '#/jadwal';
+        } catch (e) { $('#formErr').textContent = e.message; }
+      };
+    };
+    $('#sSusun').onclick = () => { benih = 1; jalan(); }; $('#sUlang').onclick = () => { benih++; jalan(); };
+  });
+  $('#tabbar').onclick = (e) => { const b = e.target.closest('button[data-t]'); if (b) tampil(b.dataset.t); };
+  tampil(tab);
+});
+
 // ---- rapor ----
 pages.rapor = guard(async () => {
   const siswa = await optSiswa();
@@ -1051,7 +1177,7 @@ const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'], GURU = ['y
 const KEU = ['yayasan', 'bendahara_yayasan', 'bendahara'], DASH = ['yayasan', 'admin', 'staf', 'bendahara_yayasan', 'bendahara'];
 const ROLE_LABEL = { yayasan: 'Admin Yayasan', bendahara_yayasan: 'Bendahara Yayasan', admin: 'Admin Lembaga', bendahara: 'Bendahara Lembaga', staf: 'Staf', guru: 'Guru' };
 const MENU = [['dashboard', 'Dashboard', DASH], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', GURU], ['pelanggaran', 'Pelanggaran', GURU],
-  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['ujian', 'Ujian Online', GURU], ['materi', 'Materi Belajar', GURU], ['akunsiswa', 'Akun Siswa', ALL], ['pembayaran', 'Pembayaran', KEU], ['tagihan', 'Tagihan', KEU], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['penyusun', 'Susun Jadwal', ADM], ['ujian', 'Ujian Online', GURU], ['materi', 'Materi Belajar', GURU], ['akunsiswa', 'Akun Siswa', ALL], ['pembayaran', 'Pembayaran', KEU], ['tagihan', 'Tagihan', KEU], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
   ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']], ['audit', 'Jejak Audit', ['yayasan']]];
 
 function route() {

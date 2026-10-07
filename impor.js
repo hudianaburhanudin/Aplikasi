@@ -52,6 +52,12 @@ const DEF = {
     { k: 'selesai', h: ['selesai', 'jamselesai'], req: true, petunjuk: 'diisi jam selesai (08.20)', contoh: '08.20' },
     { k: 'judul', h: ['judul', 'mapel', 'matapelajaran', 'kegiatan', 'matapelajarankegiatan'], req: true, petunjuk: 'diisi mata pelajaran/kegiatan', contoh: 'Matematika' },
     { k: 'guru', h: ['guru', 'pengajar'], petunjuk: 'diisi nama guru (boleh kosong)', contoh: 'Bu Sari' }] },
+  kurikulum: { judul: 'Beban Mengajar', sheet: 'Beban Mengajar', cols: [
+    { k: 'kelas', h: ['kelas'], req: true, petunjuk: 'diisi nama kelas; tanda * = semua kelas', contoh: '7A' },
+    { k: 'mapel', h: ['mapel', 'matapelajaran', 'bidangstudi'], req: true, petunjuk: 'diisi mata pelajaran', contoh: 'Matematika' },
+    { k: 'jam', h: ['jam', 'jamminggu', 'jamperminggu', 'jampelajaran', 'jammgg'], req: true, petunjuk: 'diisi jam per minggu (1-20)', contoh: '5' },
+    { k: 'guru', h: ['guru', 'pengajar', 'namaguru'], petunjuk: 'diisi nama guru seperti di menu Guru (boleh kosong)', contoh: 'Ahmad Fauzi, S.Pd' },
+    { k: 'blok', h: ['blok', 'jamberurutan', 'blokjam'], petunjuk: 'diisi 1-4: jam yang dipasang berurutan (bawaan 1)', contoh: '2' }] },
   soal: { judul: 'Soal Ujian', sheet: 'Soal', cols: [
     { k: 'tipe', h: ['tipe', 'jenis', 'jenissoal'], petunjuk: 'diisi PG atau URAIAN', contoh: 'PG' },
     { k: 'soal', h: ['soal', 'pertanyaan', 'teksoal'], req: true, petunjuk: 'diisi teks soal', contoh: 'Berapakah 2 + 3?' },
@@ -138,6 +144,34 @@ function createImpor({ db, HttpError, catat, todayWib, activeTahun }) {
         }
         return { baru: status.filter((x) => !x.id).length, diperbarui: status.filter((x) => x.id).length };
       }, ringkas: { baru: status.filter((x) => !x.id).length, diperbarui: status.filter((x) => x.id).length } };
+    },
+    kurikulum(items, lid) {
+      const kelas = db.prepare('SELECT id, nama FROM kelas WHERE lembaga_id = ?').all(lid), kMap = new Map(kelas.map((k) => [k.nama.toLowerCase(), k.id]));
+      const gMap = new Map(); for (const g of db.prepare('SELECT id, nama FROM guru WHERE lembaga_id = ?').all(lid)) gMap.set(g.nama.toLowerCase(), [...(gMap.get(g.nama.toLowerCase()) || []), g.id]);
+      const galat = [], plan = [], lihat = new Set();
+      for (const it of items) {
+        const jam = angka(it.jam), blok = it.blok == null ? 1 : angka(it.blok);
+        if (!Number.isInteger(jam) || jam < 1 || jam > 20) { galat.push([it._baris, `jam "${it.jam}" harus bilangan bulat 1-20`]); continue; }
+        if (!Number.isInteger(blok) || blok < 1 || blok > 4 || blok > jam) { galat.push([it._baris, `blok "${it.blok}" harus 1-4 dan tidak lebih besar dari jam`]); continue; }
+        let gid = null;
+        if (txt(it.guru)) { const l = gMap.get(txt(it.guru).toLowerCase()) || []; if (l.length !== 1) { galat.push([it._baris, l.length ? `guru "${it.guru}" ada ${l.length} orang` : `guru "${it.guru}" belum ada di menu Guru`]); continue; } gid = l[0]; }
+        const target = txt(it.kelas) === '*' ? kelas.map((k) => k.id) : [kMap.get(String(txt(it.kelas)).toLowerCase())];
+        if (target.some((x) => !x)) { galat.push([it._baris, `kelas "${it.kelas}" belum ada`]); continue; }
+        for (const kid of target) {
+          const key = kid + '|' + txt(it.mapel).toLowerCase();
+          if (lihat.has(key)) { galat.push([it._baris, `mapel "${it.mapel}" muncul dua kali untuk kelas yang sama`]); continue; }
+          lihat.add(key); plan.push({ kid, mapel: txt(it.mapel).slice(0, 100), jam, guru_id: gid, blok, _baris: it._baris });
+        }
+      }
+      const ada = (p) => db.prepare('SELECT id FROM beban_ajar WHERE kelas_id = ? AND lower(mapel) = lower(?)').get(p.kid, p.mapel);
+      const st = plan.map((p) => ({ p, id: (ada(p) || {}).id || null }));
+      return { galat, plan, simpan() {
+        for (const { p, id } of st) {
+          if (id) db.prepare('UPDATE beban_ajar SET jam = ?, guru_id = ?, blok = ? WHERE id = ?').run(p.jam, p.guru_id, p.blok, id);
+          else db.prepare('INSERT INTO beban_ajar (lembaga_id, kelas_id, mapel, jam, guru_id, blok) VALUES (?,?,?,?,?,?)').run(lid, p.kid, p.mapel, p.jam, p.guru_id, p.blok);
+        }
+        return { baru: st.filter((x) => !x.id).length, diperbarui: st.filter((x) => x.id).length };
+      }, ringkas: { baru: st.filter((x) => !x.id).length, diperbarui: st.filter((x) => x.id).length } };
     },
     pembayaran(items, lid) {
       const cariSiswa = cari(lid), galat = [], plan = [];
@@ -234,7 +268,7 @@ function createImpor({ db, HttpError, catat, todayWib, activeTahun }) {
   function template(jenis) {
     const def = DEF[jenis]; if (!def) throw new HttpError(404, 'Template tidak ditemukan');
     const heads = def.cols.map((c) => c.k === 'kelas' ? 'Kelas' : c.h[0].replace(/^./, (x) => x.toUpperCase()));
-    const labels = { nisn: 'NISN', nis: 'No Induk (NIS)', nip: 'NIP', jk: 'L/P', telepon: 'Telepon/HP', opsi_a: 'A', opsi_b: 'B', opsi_c: 'C', opsi_d: 'D', opsi_e: 'E', opsi_f: 'F', judul: 'Mata pelajaran / kegiatan', nilai: 'Nilai', jumlah: 'Jumlah (Rp)', bulan: 'Periode (bulan)', mapel: 'Mata pelajaran', soal: 'Soal', tipe: 'Tipe (PG/URAIAN)', kunci: 'Kunci (A-F)', bobot: 'Bobot' };
+    const labels = { nisn: 'NISN', nis: 'No Induk (NIS)', nip: 'NIP', jk: 'L/P', telepon: 'Telepon/HP', opsi_a: 'A', opsi_b: 'B', opsi_c: 'C', opsi_d: 'D', opsi_e: 'E', opsi_f: 'F', judul: 'Mata pelajaran / kegiatan', nilai: 'Nilai', jam: 'Jam per minggu', blok: 'Blok (jam berurutan)', guru: 'Guru', kelas: 'Kelas', jumlah: 'Jumlah (Rp)', bulan: 'Periode (bulan)', mapel: 'Mata pelajaran', soal: 'Soal', tipe: 'Tipe (PG/URAIAN)', kunci: 'Kunci (A-F)', bobot: 'Bobot' };
     const header = def.cols.map((c, i) => labels[c.k] || heads[i]);
     const hint = def.cols.map((c) => c.petunjuk || '');
     const contoh = def.cols.map((c) => `contoh: ${c.contoh}`.replace(/^contoh: $/, ''));

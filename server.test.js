@@ -1509,3 +1509,128 @@ test('input & unggah: template Excel, impor guru/nilai/pembayaran/jadwal/soal, n
   const dir = fs.readdirSync(require('node:os').tmpdir()).filter((f) => f.startsWith('berkas-'));
   assert.ok(dir.length >= 1);
 });
+
+test('penyusun jadwal awal tahun: pengaturan sesi, beban mengajar, batas guru, penyusunan tanpa bentrok, simpan, deteksi bentrok', async (t) => {
+  const { buildXlsx } = require('./xlsx');
+  const { client } = await boot(t);
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [SMP, MI] = [id('SMP'), id('MI')];
+  const b64 = (b) => b.toString('base64');
+  const menit = (s) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3));
+
+  // guru dan kelas
+  const G = {}; for (const n of ['Pak Ahmad', 'Bu Siti', 'Pak Budi', 'Bu Dewi']) G[n] = (await yys('guru', 'POST', { nama: n }, SMP)).data.id;
+  const K = {}; for (const n of ['7A', '7B', '8A']) K[n] = (await yys('kelas', 'POST', { nama: n }, SMP)).data.id;
+
+  // pengaturan: bawaan tersedia; validasi sesi
+  const bawaan = (await yys('jadwal-atur', 'GET', null, SMP)).data;
+  assert.deepStrictEqual([bawaan.tersimpan, bawaan.hari.length > 0, bawaan.sesi.some((s) => s.jenis === 'belajar')], [false, true, true]);
+  assert.strictEqual((await yys('jadwal-atur', 'PUT', { hari: [1, 2], sesi: [{ mulai: '07.00', selesai: '08.00', jenis: 'belajar' }, { mulai: '07.30', selesai: '08.30', jenis: 'belajar' }], maks_guru_hari: 6 }, SMP)).status, 400);   // bertumpuk
+  assert.strictEqual((await yys('jadwal-atur', 'PUT', { hari: [1], sesi: [{ mulai: '07.00', selesai: '08.00', jenis: 'lain' }] }, SMP)).status, 400);
+  assert.strictEqual((await yys('jadwal-atur', 'PUT', { hari: [], sesi: [{ mulai: '07.00', selesai: '08.00', jenis: 'belajar' }] }, SMP)).status, 400);
+  assert.strictEqual((await yys('jadwal-atur', 'PUT', { hari: [1], sesi: [{ mulai: '07.00', selesai: '08.00', jenis: 'tetap' }] }, SMP)).status, 400);        // tak ada jam belajar
+  const sesi = [{ mulai: '07:00', selesai: '07:40', jenis: 'tetap', judul: "Qiro'ah", hari: [1] }, ...[['07:40', '08:20'], ['08:20', '09:00'], ['09:00', '09:40']].map(([mulai, selesai]) => ({ mulai, selesai, jenis: 'belajar' })),
+    { mulai: '09:40', selesai: '10:00', jenis: 'tetap', judul: 'Istirahat' }, ...[['10:00', '10:40'], ['10:40', '11:20'], ['11:20', '12:00']].map(([mulai, selesai]) => ({ mulai, selesai, jenis: 'belajar' }))];
+  assert.strictEqual((await yys('jadwal-atur', 'PUT', { hari: [1, 2, 3, 4, 5, 6], sesi, maks_guru_hari: 5 }, SMP)).status, 200);
+  assert.strictEqual((await yys('jadwal-atur', 'GET', null, SMP)).data.tersimpan, true);
+
+  // beban mengajar: validasi, impor Excel (termasuk "*" = semua kelas), salin antar kelas
+  assert.strictEqual((await yys('beban_ajar', 'POST', { kelas_id: K['7A'], mapel: 'MTK', jam: 2, blok: 3 }, SMP)).status, 400);         // blok > jam
+  assert.strictEqual((await yys('beban_ajar', 'POST', { kelas_id: K['7A'], mapel: 'MTK', jam: 0 }, SMP)).status, 400);
+  assert.strictEqual((await yys('beban_ajar', 'POST', { kelas_id: K['7A'], mapel: 'MTK', jam: 4, guru_id: (await yys('guru', 'POST', { nama: 'Guru MI' }, MI)).data.id }, SMP)).status, 404);   // guru lembaga lain
+  const kur = buildXlsx('Beban', ['Kelas', 'Mata pelajaran', 'Jam per minggu', 'Guru', 'Blok (jam berurutan)'], [['diisi kelas', 'diisi mapel', 'diisi jam', '', ''],
+    ['*', 'Matematika', 5, 'Pak Ahmad', 2], ['*', 'IPA', 4, 'Bu Siti', 2], ['*', 'Bahasa Indonesia', 4, 'Pak Budi', 1], ['*', 'PJOK', 2, '', 2], ['*', 'IPS', 4, 'Bu Dewi', 1], ['7A', 'Seni', 2, '', 1]]);
+  const pk = (await yys('impor/kurikulum', 'POST', { file: b64(kur), simpan: true }, SMP)).data;
+  assert.deepStrictEqual([pk.baru, pk.diperbarui], [16, 0]);
+  const salah = (await yys('impor/kurikulum', 'POST', { file: b64(buildXlsx('X', ['Kelas', 'Mata pelajaran', 'Jam per minggu', 'Guru'], [['9Z', 'MTK', 2, ''], ['7A', 'MTK', 2, 'Tidak Ada'], ['7A', 'MTK', 99, '']])) }, SMP)).data;
+  assert.strictEqual(salah.jumlah_galat, 3);
+  assert.strictEqual((await yys('beban-salin', 'POST', { dari_kelas_id: K['7A'], ke_kelas_ids: [K['8A']] }, SMP)).data.ditambah, 1);          // hanya Seni yang belum ada di 8A
+  assert.strictEqual((await yys('beban_ajar?kelas_id=' + K['7A'], 'GET', null, SMP)).data.length, 6);
+
+  // batas guru: Pak Ahmad libur Sabtu, Bu Siti maksimal 2 jam/hari
+  assert.strictEqual((await yys('guru-batas', 'PUT', { guru_id: G['Pak Ahmad'], libur: [6] })).status, 200);
+  assert.strictEqual((await yys('guru-batas', 'PUT', { guru_id: G['Bu Siti'], libur: [], maks_hari: 2 })).status, 200);
+  assert.strictEqual((await yys('guru-batas', 'PUT', { guru_id: G['Bu Siti'], maks_hari: 99 })).status, 400);
+  const gb = (await yys('guru-batas', 'GET', null, SMP)).data;
+  assert.deepStrictEqual([gb.find((g) => g.nama === 'Pak Ahmad').libur, gb.find((g) => g.nama === 'Bu Siti').maks_hari, gb.find((g) => g.nama === 'Pak Ahmad').jam_minggu], [[6], 2, 15]);
+
+  // susun (pratinjau)
+  const pr = (await yys('jadwal-susun', 'POST', { simpan: false }, SMP)).data;
+  assert.deepStrictEqual([pr.kelas, pr.jam_total, pr.jam_tertata, pr.belum.length], [3, 61, 61, 0]);
+  const semua = pr.per_kelas.flatMap((k) => k.rows.filter((r) => r.kelas_id !== null).map((r) => ({ ...r, kelas: k.kelas })));
+  // 1) jumlah jam per kelas & mapel sesuai beban
+  for (const k of pr.per_kelas) {
+    const n = {}; for (const r of k.rows.filter((x) => x.kelas_id !== null)) n[r.judul] = (n[r.judul] || 0) + 1;
+    assert.strictEqual(n.Matematika, 5, k.kelas); assert.strictEqual(n.IPA, 4); assert.strictEqual(n.PJOK, 2);
+  }
+  // 2) tidak ada tumpang tindih kelas, tidak ada guru ganda di waktu sama
+  const tumpang = (a, b) => a.hari === b.hari && menit(a.mulai) < menit(b.selesai) && menit(b.mulai) < menit(a.selesai);
+  for (let i = 0; i < semua.length; i++) for (let j = i + 1; j < semua.length; j++) {
+    const a = semua[i], b = semua[j];
+    if (!tumpang(a, b)) continue;
+    assert.notStrictEqual(a.kelas, b.kelas, 'kelas bentrok');
+    assert.ok(!(a.guru && a.guru === b.guru), `guru bentrok: ${a.guru}`);
+  }
+  // 3) batas guru: libur Sabtu, maksimal jam per hari; blok 2 jam berurutan tidak melewati istirahat
+  assert.ok(!semua.some((r) => r.guru === 'Pak Ahmad' && r.hari === 6));
+  for (const h of [1, 2, 3, 4, 5, 6]) assert.ok(semua.filter((r) => r.guru === 'Bu Siti' && r.hari === h).length <= 2);
+  for (const k of pr.per_kelas) for (const h of [1, 2, 3, 4, 5, 6]) {
+    const mp = k.rows.filter((r) => r.kelas_id !== null && r.hari === h && r.judul === 'IPA').sort((a, b) => menit(a.mulai) - menit(b.mulai));
+    if (mp.length === 2) assert.strictEqual(mp[0].selesai, mp[1].mulai, 'blok IPA harus berurutan');
+    assert.ok(!k.rows.some((r) => r.kelas_id !== null && r.hari === h && menit(r.mulai) >= 540 + 40 && menit(r.mulai) < 600 && r.kelas_id !== null && menit(r.selesai) > 580 && menit(r.mulai) < 600), 'tidak ada pelajaran pada jam istirahat');
+  }
+  assert.ok(pr.per_kelas[0].rows.some((r) => r.kelas_id === null && r.judul === "Qiro'ah" && r.hari === 1));                       // kegiatan tetap ikut
+  assert.ok(pr.per_kelas[0].rows.some((r) => r.kelas_id === null && r.judul === 'Istirahat'));
+  // hasil dapat diulang dengan benih sama
+  const pr2 = (await yys('jadwal-susun', 'POST', { simpan: false }, SMP)).data;
+  assert.deepStrictEqual(pr2.per_kelas, pr.per_kelas);
+  assert.strictEqual((await yys('jadwal', 'GET', null, SMP)).data.length, 0);                                                         // pratinjau tidak menyimpan
+
+  // simpan
+  assert.strictEqual((await yys('jadwal', 'POST', { kelas_id: K['7A'], hari: 1, mulai: '07.40', selesai: '08.20', judul: 'Lama' }, SMP)).status, 200);
+  const tolak = await yys('jadwal-susun', 'POST', { simpan: true }, SMP);
+  assert.strictEqual(tolak.status, 409); assert.match(tolak.data.error, /ganti jadwal lama/);                                            // tidak menimpa diam-diam
+  const sv = (await yys('jadwal-susun', 'POST', { simpan: true, ganti: true }, SMP)).data;
+  assert.strictEqual(sv.simpan, true);
+  const tersimpan = (await yys('jadwal', 'GET', null, SMP)).data;
+  assert.ok(!tersimpan.some((r) => r.judul === 'Lama'));
+  assert.strictEqual(tersimpan.filter((r) => r.kelas_id === K['7A']).length, 21);
+  assert.strictEqual((await yys('jadwal-kelas?kelas_id=' + K['7A'], 'GET', null, SMP)).data.rows.some((r) => r.judul === "Qiro'ah"), true);
+  assert.deepStrictEqual((await yys('jadwal-bentrok', 'GET', null, SMP)).data, []);                                                   // hasil penyusun tidak bentrok
+  // jadwal manual yang bentrok terdeteksi
+  const bar = tersimpan.find((r) => r.guru === 'Pak Ahmad' && r.kelas_id === K['7A']);
+  const lain = tersimpan.find((r) => r.kelas_id === K['7B'] && r.hari === bar.hari && r.guru !== 'Pak Ahmad' && r.judul !== "Qiro'ah" && r.guru !== null) || tersimpan.find((r) => r.kelas_id === K['7B'] && r.hari === bar.hari && r.kelas_id !== null);
+  await yys('jadwal', 'POST', { kelas_id: K['7B'], hari: bar.hari, mulai: bar.mulai, selesai: bar.selesai, judul: 'Bentrok', guru: 'pak ahmad' }, SMP);
+  const bt = (await yys('jadwal-bentrok', 'GET', null, SMP)).data;
+  assert.ok(bt.length >= 1 && bt[0].guru.toLowerCase() === 'pak ahmad' && lain !== undefined);
+
+  // tidak mungkin: guru tunggal dengan jam melebihi kapasitas -> dilaporkan dengan alasan, tidak disimpan tanpa persetujuan
+  const K9 = (await yys('kelas', 'POST', { nama: '9A' }, SMP)).data.id;
+  await yys('beban_ajar', 'POST', { kelas_id: K9, mapel: 'Sangat Padat', jam: 20, guru_id: G['Pak Budi'] }, SMP);
+  await yys('beban_ajar', 'POST', { kelas_id: K9, mapel: 'Tambahan', jam: 20, guru_id: G['Pak Budi'] }, SMP);
+  const gagal = (await yys('jadwal-susun', 'POST', { kelas_ids: [K9] }, SMP)).data;
+  assert.ok(gagal.belum.length >= 1 && gagal.jam_tertata < gagal.jam_total);
+  assert.match(gagal.belum[0].alasan, /melebihi|terlalu padat|tidak ada slot/);
+  assert.strictEqual((await yys('jadwal-susun', 'POST', { kelas_ids: [K9], simpan: true, ganti: true }, SMP)).status, 409);
+  assert.strictEqual((await yys('jadwal-susun', 'POST', { kelas_ids: [K9], simpan: true, ganti: true, paksa: true }, SMP)).data.simpan, true);
+  assert.strictEqual((await yys('jadwal-susun', 'POST', { kelas_ids: [K9 + 999] }, SMP)).status, 400);                                  // tak ada kelas bebannya
+
+  // isolasi & peran
+  assert.strictEqual((await yys('jadwal-susun', 'POST', {}, MI)).status, 400);                                                        // MI belum punya beban
+  assert.strictEqual((await yys('jadwal-susun', 'POST', {})).status, 400);                                                            // pilih lembaga
+  await yys('users', 'POST', { username: 'stafsmp', password: 'rahasia123', nama: 'S', role: 'staf', lembaga_ids: [SMP] });
+  await yys('users', 'POST', { username: 'gurusmp', password: 'rahasia123', nama: 'G', role: 'guru', lembaga_ids: [SMP] });
+  await yys('users', 'POST', { username: 'adminmi', password: 'rahasia123', nama: 'A', role: 'admin', lembaga_ids: [MI] });
+  const masuk = async (u) => { const c = client(); await c('login', 'POST', { username: u, password: 'rahasia123' }); await c('password', 'POST', { lama: 'rahasia123', baru: 'rahasia456' }); return c; };
+  const [staf, guru, admMI] = [await masuk('stafsmp'), await masuk('gurusmp'), await masuk('adminmi')];
+  assert.strictEqual((await staf('jadwal-susun', 'POST', {})).status, 403);
+  assert.strictEqual((await staf('jadwal-atur', 'PUT', { hari: [1], sesi: sesi })).status, 403);
+  assert.strictEqual((await staf('beban_ajar')).status, 200);
+  assert.strictEqual((await guru('jadwal-susun', 'POST', {})).status, 403);
+  assert.strictEqual((await guru('beban_ajar')).status, 403);
+  assert.strictEqual((await admMI('beban_ajar')).data.length, 0);                                                                     // beban lembaga lain tak terlihat
+  assert.strictEqual((await admMI('jadwal-susun', 'POST', { kelas_ids: [K['7A']] })).status, 400);
+  assert.strictEqual((await admMI('guru-batas', 'PUT', { guru_id: G['Pak Ahmad'], libur: [1] })).status, 404);
+});
