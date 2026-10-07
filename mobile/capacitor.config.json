@@ -1,0 +1,12 @@
+{
+  "appId": "id.sch.miftahululum.wali",
+  "appName": "Wali Murid Miftahul Ulum",
+  "webDir": "www",
+  "server": {
+    "url": "https://GANTI-DENGAN-DOMAIN-ANDA/wali",
+    "cleartext": false,
+    "allowNavigation": ["GANTI-DENGAN-DOMAIN-ANDA"]
+  },
+  "ios": { "contentInset": "always" },
+  "android": { "allowMixedContent": false }
+}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#3846c9">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Belajar MU">
+<link rel="manifest" href="/manifest-siswa.webmanifest">
+<link rel="icon" href="/icons/favicon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="/siswa.css">
+<title>Belajar - Miftahul Ulum</title>
+</head>
+<body>
+<div id="boot" class="center muted">Memuat…</div>
+
+<section id="login" class="center hidden">
+  <form id="loginForm" class="panel">
+    <img src="/logo/yayasan.png" alt="Logo Yayasan Miftahul Ulumillah" width="80" height="80" class="logo">
+    <h1>Belajar</h1>
+    <p class="muted">Aplikasi belajar &amp; ujian siswa<br>Yayasan Miftahul Ulumillah</p>
+    <label>Username <input name="username" autocomplete="username" autocapitalize="none" required></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <p class="error" id="loginErr"></p>
+    <button class="btn primary">Masuk</button>
+    <p class="muted small">Username dan password dibagikan oleh guru atau tata usaha. Lupa password? Minta guru untuk mengatur ulang.</p>
+  </form>
+</section>
+
+<section id="app" class="hidden">
+  <header>
+    <div class="top">
+      <div><div class="small" id="kelasInfo"></div><b id="who"></b></div>
+      <button class="icon" id="menuBtn" aria-label="Menu">⋮</button>
+    </div>
+  </header>
+  <main id="view"></main>
+  <nav id="tabs">
+    <button data-t="beranda"><span>🏠</span>Beranda</button>
+    <button data-t="materi"><span>📚</span>Materi</button>
+    <button data-t="ujian"><span>✍️</span>Ujian</button>
+    <button data-t="nilai"><span>🏅</span>Nilai</button>
+  </nav>
+</section>
+
+<section id="exam" class="hidden" aria-live="polite"></section>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+<div id="toast" class="toast hidden"></div>
+<script src="/siswa.js"></script>
+</body>
+</html>

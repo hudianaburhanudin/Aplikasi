@@ -1,0 +1,14 @@
+{
+  "name": "administrasi-sekolah",
+  "version": "1.0.0",
+  "description": "Aplikasi administrasi sekolah: siswa, guru, kelas, absensi, nilai, dan pembayaran SPP",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seed.js",
+    "backup": "node backup.js",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=22.13" },
+  "license": "MIT"
+}

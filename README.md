@@ -1,1 +1,120 @@
-# Aplikasi
+# Administrasi Yayasan Miftahul Ulumillah
+
+Aplikasi web untuk administrasi seluruh lembaga di bawah Yayasan Miftahul Ulumillah:
+Pondok Pesantren, SMK, SMP Plus (Tambakrejo), MI, RA Muslimat, Madin Ula, dan Madin Wustho.
+Tanpa dependensi eksternal: Node.js (>= 22.13) + SQLite bawaan Node + frontend HTML/JS.
+
+## Peran berjenjang
+| Peran | Cakupan | Akses |
+|---|---|---|
+| **Admin Yayasan** | semua lembaga | semuanya: lembaga, tahun ajaran, profil yayasan, jejak audit, **semua akun pengguna** |
+| **Bendahara Yayasan** | semua lembaga | hanya **keuangan**: pembayaran, tagihan, kuitansi, pengingat WA, dashboard keuangan; siswa hanya dibaca (tanpa data pribadi) |
+| **Admin Lembaga** | lembaganya saja | dashboard & operasional lembaganya (siswa, absensi, nilai, rapor, jadwal, ujian, PPDB, WhatsApp); **tanpa keuangan**, tanpa pengaturan yayasan; hanya boleh membuat akun staf/guru lembaganya |
+| **Bendahara Lembaga** | lembaganya saja | seperti Bendahara Yayasan, tetapi hanya untuk lembaganya |
+| **Staf / Guru** | lembaganya saja | staf: operasional tanpa keuangan; guru: absensi, pelanggaran, ujian & materi |
+
+Akun admin lembaga dan bendahara hanya dapat dibuat oleh Admin Yayasan. Wali murid dan siswa memakai aplikasi sendiri (`/wali`, `/siswa`).
+
+## Fitur
+- **Multi-lembaga**: data tiap lembaga terpisah; pilih lembaga aktif lewat menu di samping
+- **Peran**: *Admin Yayasan* (semua lembaga), *Admin Lembaga* (lembaganya + kelola staf), *Staf*
+- **Tahun ajaran** dan pengelolaan lembaga (admin yayasan)
+- **Pendaftaran online (PPDB)**: orang tua mendaftar lewat `/daftar` dari HP (tanpa login), mendapat nomor
+  pendaftaran, dan bisa cek status (nomor + tanggal lahir). Dibuka/ditutup per lembaga; ada penangkal spam
+  (batas per IP, kolom jebakan, deteksi ganda). Admin menyeleksi (baru → terverifikasi → diterima/cadangan/ditolak)
+  lalu **Jadikan siswa** dengan satu klik.
+- **Kenaikan kelas & kelulusan** massal (atomik), pindah/keluar, **alumni**, dan **riwayat** tiap siswa
+- **Portal wali murid (PWA)** di `/wali`: dipasang di layar utama HP; wali melihat nilai, absensi, tagihan,
+  riwayat pembayaran, dan pengumuman anaknya (satu akun bisa untuk beberapa anak lintas lembaga). Petugas membuat
+  akun dari daftar siswa (**Akun wali**): password sementara acak tampil sekali + tombol kirim WhatsApp;
+  wali wajib mengganti password saat pertama masuk. Wali hanya bisa membaca data anaknya sendiri.
+- **Tagihan** (buat massal per kelas; status lunas/sebagian/belum otomatis dari pembayaran) dan **Pengumuman**
+- **Absensi & pelanggaran lewat WhatsApp**: petugas/guru cukup mengirim pesan ke satu nomor sekolah.
+  `absen 7A andin sakit, budi izin demam` (semua siswa otomatis hadir kecuali yang disebut),
+  `langgar andin terlambat`, `rekap 7A`, `poin andin`, `batal`, `bantuan`. Hanya nomor yang terdaftar
+  (kolom No. WhatsApp di Pengguna) yang diproses, dibatasi pada lembaga pengirim; semua-atau-tidak-sama-sekali
+  bila ada nama yang tidak dikenali; bisa dibatalkan. Menu **WhatsApp** menyediakan simulator chat dan riwayat pesan.
+- **Pelanggaran siswa**: jenis & poin per lembaga (bisa diubah admin), peringatan pada 50 dan 100 poin,
+  tampil di aplikasi wali. Peran **Guru** hanya mengakses absensi dan pelanggaran.
+- **Siswa, Guru, Kelas**: tambah/ubah/hapus, pencarian, filter (NIS boleh sama antar lembaga)
+- **Data siswa lengkap** sesuai kebutuhan EMIS/Dapodik/MBG: NISN, NIS lokal, NIK, No. KK, orang tua (NIK, pendidikan, pekerjaan,
+  penghasilan), alamat rinci, KIP/KPS/PKH/SKTM, status mengulang; NSM/NPSN per lembaga. **Impor Excel** langsung dari berkas
+  By Name By Address, Daftar Peserta Didik Dapodik, atau rekap MBG/SPPG (kolom dikenali otomatis, pratinjau sebelum simpan,
+  siswa yang sudah ada diperbarui bukan digandakan). **Ekspor** format By Name By Address, rekap SPPG, dan data lengkap.
+  Guru tidak melihat NIK/KK/alamat/penghasilan/bantuan sosial.
+- **Absensi** harian per kelas + rekap bulanan
+- **Susun Jadwal awal tahun pelajaran** (menu *Susun Jadwal*, per lembaga, Admin): 4 langkah - (1) hari belajar dan sesi harian
+  (pembuat sesi otomatis: jam masuk, durasi, istirahat; kegiatan tetap seperti upacara/Qiro'ah per hari), (2) mata pelajaran, jam per minggu,
+  guru, dan blok jam berurutan per kelas (input, salin antar kelas, atau impor Excel), (3) batas guru (hari libur, maksimal jam/hari),
+  (4) susun otomatis. Hasil tanpa bentrok guru/kelas, blok tidak melewati istirahat, mapel disebar antarhari; ditampilkan dulu per kelas,
+  bisa diulang dengan variasi lain, dan jam yang gagal ditata dilaporkan beserta sebabnya. Disimpan ke menu Jadwal (tidak menimpa tanpa persetujuan).
+  Menu Jadwal juga punya **Cek bentrok guru** untuk jadwal yang diubah manual. Batas: bentrok antarlembaga untuk guru yang sama belum diperiksa.
+- **Jadwal pelajaran** per kelas (baris tanpa kelas = berlaku untuk semua kelas), tampilan tabel hari × jam, **PDF**,
+  impor massal CSV, dan tab **Jadwal** di aplikasi wali. Jadwal asli yayasan ada di `data/jadwal/` (MI semua kelas,
+  SMK kelas X DKV, SMP kelas VII–IX; kode guru pada PDF sudah diganti nama) - impor lewat Jadwal → *Impor massal*.
+- **Aplikasi Belajar untuk siswa** (`/siswa`, PWA terpisah dari aplikasi wali): siswa hanya melihat **materi**, **ujian online**
+  (harian / UTS / semester) dan nilai ujiannya - tidak ada data keuangan, absensi, atau pelanggaran. Guru/admin membuat ujian
+  (menu *Ujian Online*): soal pilihan ganda (dinilai otomatis) dan uraian (dinilai guru), jendela waktu, durasi per siswa, acak
+  soal & pilihan, satu kali kesempatan, simpan jawaban otomatis, tutup otomatis saat waktu habis, catatan pindah tab. Kunci jawaban
+  tidak pernah dikirim ke siswa dan semua pengecekan waktu dilakukan di server. **Nilai akhir otomatis masuk ke Nilai dan Rapor.**
+  Akun siswa dibuat massal per kelas (menu *Akun Siswa*, password sementara + PDF), materi di menu *Materi Belajar*.
+- **Input data, template, dan unggah**: tiap data utama punya tombol **⬇ Template** (Excel berisi judul kolom, petunjuk, dan contoh)
+  dan **Impor Excel/CSV** dengan pratinjau dan pemeriksaan per baris (tidak ada yang tersimpan bila ada baris bermasalah):
+  siswa, guru, nilai, pembayaran, jadwal, dan soal ujian. **Input nilai per kelas** seperti lembar nilai. Soal ujian dapat diunggah dari
+  Excel, CSV, **Word (.docx)**, atau teks, plus **gambar soal**. **Materi pelajaran** dapat dilampiri berkas (PDF, Word, PowerPoint, Excel,
+  gambar, mp3, mp4; maks. 20 MB, atur `UPLOAD_MAX_MB`) yang dibuka siswa di aplikasi Belajar. Berkas disimpan di `data/berkas`
+  (volume Docker `data`), hanya dilayani lewat pemeriksaan hak akses, dan ikut disalin ke cloud bila `BACKUP_RCLONE_REMOTE` diatur.
+- **Cetak massal**: rapor satu kelas dalam satu PDF, **kartu pelajar** (dengan barcode NIS/NISN) per kelas atau per siswa.
+- **Rapor di aplikasi wali** (lihat per semester + unduh PDF); kehadiran rapor dihitung per semester (Ganjil Jul-Des, Genap Jan-Jun).
+- **Pengingat tagihan lewat WhatsApp** ke wali (pratinjau dulu, tidak mengulang dalam 7 hari), serta dashboard dengan tren
+  kehadiran, tunggakan per lembaga, dan daftar siswa yang perlu perhatian.
+- **Nilai** dan **Rapor** per siswa. Lembaga berjenjang **Madin** memakai format rapor ASAT (mapel pokok/kecakapan + KKM,
+  nilai angka dan huruf, rata-rata kelas, catatan guru, kepribadian, ketidakhadiran, tanda tangan wali kelas & kepala);
+  mapel dan KKM diatur di **Mapel Rapor**, sikap/catatan diisi lewat tombol di halaman Rapor. Lembaga lain memakai format umum.
+- **Pembayaran** (SPP dll.) dan kuitansi
+- **Ekspor Excel (.xlsx) dan PDF** (daftar, rapor, kuitansi) sesuai filter aktif
+- Login, ganti password, reset password oleh admin
+
+### Pondok pesantren (santri)
+Lembaga pondok harus berjenjang **Pesantren** (menu Lembaga). Pondok memakai semua fitur sekolah (kelas/halaqah, absensi, nilai, rapor, jadwal, ujian, pembayaran, wali) ditambah **Kamar/Asrama** (kapasitas, pembina), status **mukim/laju**, dan **Izin Santri** (pulang/keluar, terlambat kembali tampil di dashboard dan di aplikasi wali).
+Cara memasukkan santri:
+1. **Dari data sekolah** – menu *Siswa* → pilih kelas → **🕌 Daftarkan ke Pondok** (admin yayasan atau admin sekolah). Dibuatkan catatan santri di pondok; data identitas & akun wali ikut tertaut, data sekolah tidak berubah. Yang sudah jadi santri dilewati.
+2. **Langsung di pondok** – menu *Santri* → **+ Tambah**, atau **Impor Excel** (template punya kolom *Kamar* dan *Mukim*; kamar yang belum ada dibuat otomatis).
+3. **PPDB online** pondok seperti lembaga lain.
+Setelah itu admin pondok mengatur kelas dan kamar (menu *Kamar* → Penghuni) dan mencatat izin.
+
+## WhatsApp
+Aplikasi menerima pesan lewat webhook `https://DOMAIN/api/wa/webhook` dan membalas lewat penyedia yang dipilih
+(`WA_PROVIDER`, lihat `.env.example`). Penyedia resmi **Meta WhatsApp Cloud API** disarankan (stabil, nomor tidak
+berisiko diblokir; butuh akun Meta Business dan nomor khusus yang tidak dipakai di aplikasi WhatsApp biasa).
+Gateway tidak resmi (Fonnte, WAHA) lebih mudah disiapkan dan dapat berada di grup, tetapi nomor berisiko diblokir.
+Webhook diamankan tanda tangan (Meta) atau token (lainnya), menolak pesan ganda dan antrean lama, dan membatasi laju.
+Format webhook tiap penyedia perlu diuji dengan akun Anda sendiri saat penyambungan pertama.
+
+## Deploy
+Panduan lengkap: **`DEPLOY.md`** (VPS + Docker + HTTPS otomatis + backup) dan **`META-WHATSAPP.md`** (menyambungkan WhatsApp Cloud API).
+
+## Menjalankan
+```bash
+npm start            # http://localhost:3000
+npm run seed         # (opsional) data contoh di SMP
+npm run backup       # backup database ke data/backup/
+npm test
+```
+Saat pertama dijalankan dibuat akun `admin` (Admin Yayasan) dengan **password acak yang dicetak di
+konsol** (atau set `ADMIN_PASSWORD` sebelum run pertama). Catat lalu ganti.
+
+Variabel lingkungan (lengkap di `.env.example`): `PORT` (default 3000), `DB_FILE` (default `data/sekolah.db`), `ADMIN_PASSWORD`,
+`TRUST_PROXY=1` (wajib bila di belakang reverse proxy agar batas per-IP memakai IP asli pengunjung).
+
+Skema database bermigrasi otomatis (versi tersimpan di `PRAGMA user_version`).
+
+> Data berisi informasi anak: jalankan di belakang HTTPS, batasi akses server, dan jadwalkan
+> `npm run backup` (mis. cron harian) dengan salinan di luar server.
+> Database versi sebelum multi-lembaga tidak kompatibel; hapus `data/sekolah.db` lama.
+
+## Rencana
+1. ✅ Fondasi multi-lembaga, peran, tahun ajaran
+2. ✅ Pendaftaran online (PPDB) → seleksi → siswa, kenaikan kelas, kelulusan/alumni
+3. ✅ Portal wali murid (PWA). Berikutnya: notifikasi push dan pembungkus toko (lihat `mobile/README.md`)
+4. ✅ Paket deploy (Docker + HTTPS otomatis + backup otomatis) dan panduan Meta WhatsApp — lihat `DEPLOY.md`
