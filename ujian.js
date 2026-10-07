@@ -18,7 +18,7 @@ const semesterSekarang = () => (new Date(Date.now() + WIB).getUTCMonth() >= 6 ? 
 function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 function acakTetap(arr, seed) { const r = mulberry32(seed), a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-function createUjian({ db, HttpError, catat, str, ph, todayWib, hashPassword, genPassword, sessions, lembagaOf }) {
+function createUjian({ db, HttpError, catat, str, ph, todayWib, hashPassword, genPassword, sessions, lembagaOf, hapusBerkas = () => {} }) {
   const J = (v, d) => { try { return JSON.parse(v); } catch { return d; } };
 
   // ---------- penilaian ----------
@@ -91,7 +91,7 @@ function createUjian({ db, HttpError, catat, str, ph, todayWib, hashPassword, ge
   function soalAdmin(q, ctx) {
     const u = ujianTerlihat(q.ujian_id, ctx);
     const kerja = db.prepare('SELECT COUNT(*) n FROM ujian_peserta WHERE ujian_id = ?').get(u.id).n;
-    return { ujian: u, terkunci: kerja > 0, soal: db.prepare('SELECT id, urut, tipe, teks, opsi, kunci, bobot FROM soal WHERE ujian_id = ? ORDER BY urut').all(u.id).map((s) => ({ ...s, opsi: J(s.opsi, null) })) };
+    return { ujian: u, terkunci: kerja > 0, soal: db.prepare('SELECT id, urut, tipe, teks, opsi, kunci, bobot, gambar_id FROM soal WHERE ujian_id = ? ORDER BY urut').all(u.id).map((s) => ({ ...s, opsi: J(s.opsi, null) })) };
   }
   function simpanSoal(body, ctx) {
     const u = ujianTerlihat(body.ujian_id, ctx);
@@ -105,18 +105,22 @@ function createUjian({ db, HttpError, catat, str, ph, todayWib, hashPassword, ge
       if (!teks) throw new HttpError(400, `${no}: teks soal kosong`);
       const bobot = Number(s.bobot ?? 1);
       if (!(bobot > 0 && bobot <= 1000)) throw new HttpError(400, `${no}: bobot harus lebih dari 0`);
-      if (tipe === 'uraian') return { tipe, teks, opsi: null, kunci: null, bobot };
+      const gid = s.gambar_id ? Number(s.gambar_id) : null;
+      if (gid && !db.prepare("SELECT 1 FROM berkas WHERE id = ? AND ujian_id = ? AND ext IN ('jpg','jpeg','png','gif','webp')").get(gid, u.id)) throw new HttpError(400, `${no}: gambar tidak valid`);
+      if (tipe === 'uraian') return { tipe, teks, opsi: null, kunci: null, bobot, gambar_id: gid };
       const opsi = (Array.isArray(s.opsi) ? s.opsi : []).map((o) => str(o, 500)).filter((o) => o !== null);
       if (opsi.length < 2 || opsi.length > 6) throw new HttpError(400, `${no}: pilihan jawaban 2-6`);
       const kunci = Number(s.kunci);
       if (!Number.isInteger(kunci) || kunci < 0 || kunci >= opsi.length) throw new HttpError(400, `${no}: kunci jawaban belum dipilih`);
-      return { tipe, teks, opsi, kunci, bobot };
+      return { tipe, teks, opsi, kunci, bobot, gambar_id: gid };
     });
     db.exec('BEGIN');
     try {
       db.prepare('DELETE FROM soal WHERE ujian_id = ?').run(u.id);
-      const ins = db.prepare('INSERT INTO soal (ujian_id, urut, tipe, teks, opsi, kunci, bobot) VALUES (?,?,?,?,?,?,?)');
-      bersih.forEach((s, i) => ins.run(u.id, i + 1, s.tipe, s.teks, s.opsi && JSON.stringify(s.opsi), s.kunci, s.bobot));
+      const ins = db.prepare('INSERT INTO soal (ujian_id, urut, tipe, teks, opsi, kunci, bobot, gambar_id) VALUES (?,?,?,?,?,?,?,?)');
+      bersih.forEach((s, i) => ins.run(u.id, i + 1, s.tipe, s.teks, s.opsi && JSON.stringify(s.opsi), s.kunci, s.bobot, s.gambar_id));
+      const dipakai = bersih.map((s) => s.gambar_id).filter(Boolean);
+      for (const g of db.prepare('SELECT id FROM berkas WHERE ujian_id = ?').all(u.id)) if (!dipakai.includes(g.id)) hapusBerkas(g.id);   // gambar yang tidak dipakai lagi
       if (!bersih.length && u.status === 'terbit') db.prepare("UPDATE ujian SET status = 'draft' WHERE id = ?").run(u.id);
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
@@ -244,12 +248,12 @@ function createUjian({ db, HttpError, catat, str, ph, todayWib, hashPassword, ge
   const ujianKelas = (s) => db.prepare(`SELECT u.*, (SELECT COUNT(*) FROM soal WHERE ujian_id = u.id) jumlah_soal FROM ujian u
     WHERE u.kelas_id = ? AND u.status = 'terbit' ORDER BY u.mulai DESC`).all(s.kelas_id || -1);
   function soalUntukSiswa(u, p, siswaId) {
-    let list = db.prepare('SELECT id, tipe, teks, opsi, bobot FROM soal WHERE ujian_id = ? ORDER BY urut').all(u.id).map((s) => ({ ...s, opsi: J(s.opsi, null) }));
+    let list = db.prepare('SELECT id, tipe, teks, opsi, bobot, gambar_id FROM soal WHERE ujian_id = ? ORDER BY urut').all(u.id).map((s) => ({ ...s, opsi: J(s.opsi, null) }));
     if (u.acak) list = acakTetap(list, siswaId * 100003 + u.id);
     return list.map((s, i) => {
       let opsi = s.opsi && s.opsi.map((t, idx) => ({ i: idx, t }));
       if (opsi && u.acak) opsi = acakTetap(opsi, siswaId * 7919 + s.id);
-      return { id: s.id, no: i + 1, tipe: s.tipe, teks: s.teks, opsi, bobot: s.bobot };
+      return { id: s.id, no: i + 1, tipe: s.tipe, teks: s.teks, gambar: s.gambar_id ? `/api/berkas/${s.gambar_id}` : null, opsi, bobot: s.bobot };
     });
   }
   function sesiUjian(u, p, siswaId) {
@@ -261,7 +265,9 @@ function createUjian({ db, HttpError, catat, str, ph, todayWib, hashPassword, ge
     tutupKadaluwarsa();
     if (what === 'profil') return { siswa: { nama: s.nama, nis: s.nis, kelas_nama: s.kelas_nama, lembaga_nama: s.lembaga_nama, lembaga_kode: s.lembaga_kode }, sekarang: Date.now() };
     if (what === 'materi') {
-      return db.prepare(`SELECT id, mapel, judul, isi, tautan, dibuat FROM materi WHERE lembaga_id = ? AND (kelas_id = ? OR kelas_id IS NULL) ORDER BY id DESC LIMIT 200`).all(s.lembaga_id, s.kelas_id || -1);
+      const rows = db.prepare(`SELECT id, mapel, judul, isi, tautan, dibuat FROM materi WHERE lembaga_id = ? AND (kelas_id = ? OR kelas_id IS NULL) ORDER BY id DESC LIMIT 200`).all(s.lembaga_id, s.kelas_id || -1);
+      const fl = db.prepare('SELECT id, materi_id, nama, ext, ukuran FROM berkas WHERE materi_id IN (' + (rows.length ? rows.map(() => '?').join(',') : 'NULL') + ') ORDER BY id').all(...rows.map((r) => r.id));
+      return rows.map((r) => ({ ...r, berkas: fl.filter((f) => f.materi_id === r.id).map(({ id, nama, ext, ukuran }) => ({ id, nama, ext, ukuran })) }));
     }
     if (what === 'ujian' && !parts[2]) {
       const pes = new Map(db.prepare('SELECT * FROM ujian_peserta WHERE siswa_id = ?').all(s.id).map((p) => [p.ujian_id, p]));

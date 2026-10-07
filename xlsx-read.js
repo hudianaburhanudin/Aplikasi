@@ -82,4 +82,32 @@ function readXlsx(buf, { maxRows = 20000 } = {}) {
   return out;
 }
 
-module.exports = { readXlsx };
+// CSV/TSV sederhana (pemisah , ; atau tab terdeteksi dari baris pertama; tanda kutip ganda didukung) -> baris-baris array
+function readCsv(text, { maxRows = 20000 } = {}) {
+  text = String(text).replace(/^\uFEFF/, '');
+  const first = text.split(/\r?\n/, 1)[0] || '';
+  const sep = [',', ';', '\t'].map((c) => [c, first.split(c).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let row = [], cur = '', q = false;
+  const end = () => { row.push(cur.trim() === '' ? null : cur.trim()); cur = ''; };
+  for (let i = 0; i < text.length && rows.length < maxRows; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"' && cur === '') q = true;
+    else if (ch === sep) end();
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; end(); rows.push(row); row = []; }
+    else cur += ch;
+  }
+  if (cur !== '' || row.length) { end(); rows.push(row); }
+  return rows.filter((r) => r.some((v) => v !== null));
+}
+
+// Teks paragraf berkas Word (.docx), satu paragraf per baris
+function readDocxText(buf) {
+  const files = unzip(buf), f = files.get('word/document.xml');
+  if (!f) throw new Error('Bukan berkas Word (.docx) yang valid');
+  const x = f().toString('utf8');
+  return [...x.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)].map((m) => [...m[0].matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:br\/>/g)]
+    .map((t) => (t[1] !== undefined ? unesc(t[1]) : t[0] === '<w:tab/>' ? '\t' : '\n')).join('')).join('\n');
+}
+
+module.exports = { readXlsx, readCsv, readDocxText };

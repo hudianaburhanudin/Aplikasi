@@ -33,7 +33,7 @@ for (const [field, keys] of Object.entries(ALIAS)) for (const k of keys) if (!LO
 const SUBS = new Set(['nama', 'tahunlahir', 'jenjangpendidikan', 'pekerjaan', 'penghasilan', 'nik']);
 
 const mapHeader = (h) => {
-  const k = norm(h);
+  const k = norm(String(h ?? '').replace(/\(.*?\)/g, ''));
   if (LOOKUP.has(k)) return LOOKUP.get(k);
   if (k.startsWith('nomorindukSiswanasional'.toLowerCase())) return 'nisn';
   if (k.startsWith('namaorangtua')) return 'wali';
@@ -91,7 +91,7 @@ function parseSheet(rows) {
   for (let r = h.first; r < rows.length; r++) {
     const row = rows[r] || [], rec = {};
     const ni = Object.entries(h.cols).find(([, f]) => f === 'nama');
-    if (!ni || row[ni[0]] == null || /^(diisi\b|urut$)/i.test(String(row[ni[0]]).trim())) continue;
+    if (!ni || row[ni[0]] == null || /^(diisi|contoh)\b|^urut$/i.test(String(row[ni[0]]).trim())) continue;
     for (const [i, f] of Object.entries(h.cols)) {
       const v = row[i];
       if (v == null) continue;
@@ -107,7 +107,7 @@ function parseSheet(rows) {
       else if (f === 'telepon' || f === 'hp') { const x = digits(v); if (x && (f === 'hp' || !rec.telepon)) rec.telepon = x; }
       else { const x = str(v); if (x) rec[f] = x; }
     }
-    if (!rec.nama || /^diisi\b/i.test(rec.nama) || /^urut$/i.test(rec.nama)) continue;
+    if (!rec.nama || /^(diisi|contoh)\b/i.test(rec.nama) || /^urut$/i.test(rec.nama)) continue;
     if (rec.nama.length > 100) rec.nama = rec.nama.slice(0, 100);
     rec._baris = r + 1;
     records.push(rec);

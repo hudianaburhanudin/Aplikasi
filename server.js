@@ -1,5 +1,6 @@
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { openDb, hashPassword, verifyPassword, seedJenis } = require('./db');
@@ -7,6 +8,8 @@ const { createWa, waNorm } = require('./wa');
 const { backupNow, backupTerakhir, salinKeLuar } = require('./backup-lib');
 const { buildXlsx } = require('./xlsx');
 const { createUjian } = require('./ujian');
+const { createBerkas } = require('./berkas');
+const { createImpor } = require('./impor');
 const { readXlsx } = require('./xlsx-read');
 const { parseSheet } = require('./siswa-impor');
 const { tablePdf, raporPdf, raporBanyakPdf, kartuPdf, kuitansiPdf, jadwalPdf } = require('./pdf');
@@ -162,6 +165,16 @@ const EXPORTS = {
   sppg: ['Rekapitulasi Data Siswa (SPPG)', [['NO', 'no'], ['NISN', 'nisn'], ['NAMA SISWA', 'nama'], ['UMUR', 'umur'], ['JENIS KELAMIN', 'jk'], ['KELAS', 'kelas_nama'], ['NAMA ORANG TUA / WALI', 'ortu']]],
   'rekap-absensi': ['Rekap Absensi', [['NIS', 'nis'], ['Nama', 'nama'], ['Hadir', 'h'], ['Sakit', 's'], ['Izin', 'i'], ['Alpa', 'a']]],
 };
+// Template Excel data siswa (format By Name By Address; baris 2 = petunjuk, baris 3 = contoh; keduanya dilewati saat impor)
+function templateSiswa() {
+  const kol = [['No', '', 'contoh: 1'], ['NIS Lokal (EMIS)', 'diisi NIS lokal sesuai EMIS', '111235220242240001'], ['NISN', 'diisi NISN', '3174237254'], ['No Induk', 'diisi nomor induk sekolah', '0334'],
+    ['Nama Siswa', 'diisi nama lengkap', 'contoh: Adiba Shakila Khoironi'], ['Tempat Lahir', 'diisi tempat lahir', 'Bojonegoro'], ['Tanggal Lahir', 'diisi tanggal (2017-01-30 atau 30/01/2017)', '2017-01-30'],
+    ['NIK Siswa', 'diisi 16 digit', '3522027010170001'], ['Nomor KK', 'diisi 16 digit', '3522022607110002'], ['Jenis Kelamin', 'diisi L / P', 'P'], ['Kelas', 'diisi kelas (1, 2, 7A, ...)', '1'],
+    ['KIP KEMENAG', 'diisi nomor kartu bila ada', ''], ['KIP DIKNAS', '', ''], ['KPS', '', ''], ['PKH', '', ''], ['SKTM', '', ''],
+    ['Nama Ayah', 'diisi nama ayah', 'Imam Nur Cholik'], ['NIK Ayah', 'diisi 16 digit', '3522022101830001'], ['Nama Ibu', 'diisi nama ibu', 'Yuliana Wati'], ['NIK Ibu', 'diisi 16 digit', '3522025011860004'],
+    ['Alamat Siswa', 'diisi alamat', 'Tambakrejo RT/RW 02/01'], ['Desa', '', 'Tambakrejo'], ['Kecamatan', '', 'Tambakrejo'], ['Kabupaten', '', 'Bojonegoro'], ['No HP', 'diisi nomor HP/WA orang tua', '081234567890'], ['STATUS', 'diisi TIDAK MENGULANG / MENGULANG', 'TIDAK MENGULANG']];
+  return buildXlsx('Data Siswa', kol.map((k) => k[0]), [kol.map((k, i) => (i === 0 ? 'diisi urut' : k[1])), kol.map((k, i) => (i === 0 ? 'contoh: 1' : k[2]))]);
+}
 const EXPORT_SRC = { 'siswa-lengkap': 'siswa', 'by-name': 'siswa', sppg: 'siswa' };
 function umurTeks(tgl, today) {
   if (!tgl) return '';
@@ -188,11 +201,20 @@ const KEUANGAN = new Set(['yayasan', 'bendahara_yayasan', 'bendahara']);
 const SEMUA_LEMBAGA = new Set(['yayasan', 'bendahara_yayasan']);
 const API_KEUANGAN = new Set(['pembayaran', 'tagihan', 'pengingat-tagihan']);
 const KEY_KEUANGAN = new Set(['pembayaran', 'tagihan', 'kuitansi']);       // ekspor/PDF keuangan
-const BENDAHARA_API = new Set(['me', 'logout', 'password', 'dashboard', 'pembayaran', 'tagihan', 'pengingat-tagihan', 'siswa', 'kelas', 'lembaga', 'tahun_ajaran', 'export', 'pdf']);
+const BENDAHARA_API = new Set(['me', 'logout', 'password', 'dashboard', 'pembayaran', 'tagihan', 'pengingat-tagihan', 'siswa', 'kelas', 'lembaga', 'tahun_ajaran', 'export', 'pdf', 'template', 'impor']);
+// jenis template/impor yang boleh dipakai tiap peran
+const JENIS_IMPOR = { guru: 'umum', nilai: 'umum', jadwal: 'umum', siswa: 'umum', soal: 'umum', pembayaran: 'keuangan' };
+const jenisBoleh = (role, jenis) => {
+  const j = JENIS_IMPOR[jenis];
+  if (!j) return false;
+  if (isBendahara(role)) return jenis === 'pembayaran';
+  if (role === 'guru') return jenis === 'soal';
+  return j === 'umum' || KEUANGAN.has(role);
+};
 const BENDAHARA_BACA = new Set(['siswa', 'kelas', 'lembaga', 'tahun_ajaran']);
 const isBendahara = (r) => r === 'bendahara' || r === 'bendahara_yayasan'; // 'wali' dikelola lewat /api/wali-akun
 // Guru hanya boleh: absensi dan pelanggaran (tulis), serta melihat kelas/siswa/jenis pelanggaran.
-const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran', 'jadwal', 'jadwal-kelas', 'ujian', 'ujian-soal', 'ujian-hasil', 'materi']);
+const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran', 'jadwal', 'jadwal-kelas', 'ujian', 'ujian-soal', 'ujian-hasil', 'materi', 'ujian-soal-impor', 'template', 'berkas', 'nilai-massal']);
 // Data pribadi siswa yang tidak perlu dilihat guru
 const SISWA_SENSITIF = ['nik', 'no_kk', 'alamat', 'rt', 'rw', 'dusun', 'desa', 'kecamatan', 'kabupaten', 'kode_pos', 'email', 'nik_ayah', 'nik_ibu',
   'lahir_ayah', 'pendidikan_ayah', 'pekerjaan_ayah', 'penghasilan_ayah', 'lahir_ibu', 'pendidikan_ibu', 'pekerjaan_ibu', 'penghasilan_ibu',
@@ -295,7 +317,10 @@ function createApp(dbFile, opts = {}) {
     return r.lembaga_id;
   };
 
-  const ujianSvc = createUjian({ db, HttpError, catat, str, ph, todayWib, hashPassword, genPassword, sessions, lembagaOf });
+  const uploadDir = opts.uploadDir || (dbFile === ':memory:' ? fs.mkdtempSync(path.join(os.tmpdir(), 'berkas-')) : path.join(path.dirname(dbFile), 'berkas'));
+  const berkasSvc = createBerkas({ db, dir: uploadDir, HttpError, maksMb: Number(process.env.UPLOAD_MAX_MB) || 20 });
+  const imporSvc = createImpor({ db, HttpError, catat, todayWib, activeTahun });
+  const ujianSvc = createUjian({ db, HttpError, catat, str, ph, todayWib, hashPassword, genPassword, sessions, lembagaOf, hapusBerkas: (id) => berkasSvc.hapus(id) });
 
   const clean = (cfg, body, create) => {
     const out = {};
@@ -931,6 +956,66 @@ function createApp(dbFile, opts = {}) {
     if ('isi' in d && d.isi) d.isi = d.isi.slice(0, 20000);
     if ('judul' in d && d.judul) d.judul = d.judul.slice(0, 200);
   }
+  // ---- input nilai massal satu kelas ----
+  function nilaiMassal(body, ctx) {
+    const kid = Number(body.kelas_id);
+    if (!kid) throw new HttpError(400, 'Pilih kelas');
+    const lid = lembagaOf('kelas', kid, ctx);
+    const mapel = str(body.mapel, 100), jenis = str(body.jenis, 40) || 'Ulangan Harian', semester = body.semester || null;
+    if (!mapel) throw new HttpError(400, 'Mata pelajaran wajib diisi');
+    if (semester && !['Ganjil', 'Genap'].includes(semester)) throw new HttpError(400, 'Semester harus Ganjil atau Genap');
+    const tgl = body.tanggal || todayWib();
+    if (!isDate(tgl)) throw new HttpError(400, 'Tanggal tidak valid');
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length || items.length > 500) throw new HttpError(400, 'Data nilai kosong atau terlalu banyak');
+    const dalam = new Set(db.prepare('SELECT id FROM siswa WHERE kelas_id = ? AND lembaga_id = ?').all(kid, lid).map((r) => r.id));
+    let baru = 0, ubah = 0, kosong = 0;
+    db.exec('BEGIN');
+    try {
+      for (const it of items) {
+        if (it.nilai === '' || it.nilai === null || it.nilai === undefined) { kosong++; continue; }
+        const sid = Number(it.siswa_id), n = Number(String(it.nilai).replace(',', '.'));
+        if (!dalam.has(sid)) throw new HttpError(400, 'Ada siswa yang bukan anggota kelas ini');
+        if (!Number.isFinite(n) || n < 0 || n > 100) throw new HttpError(400, `Nilai harus 0-100 (diterima "${it.nilai}")`);
+        const ada = db.prepare("SELECT id FROM nilai WHERE siswa_id = ? AND lower(mapel) = lower(?) AND lower(COALESCE(jenis, '')) = lower(?) AND semester IS ?").get(sid, mapel, jenis, semester);
+        if (ada) { db.prepare('UPDATE nilai SET nilai = ?, tanggal = ? WHERE id = ?').run(Math.round(n * 100) / 100, tgl, ada.id); ubah++; }
+        else { db.prepare('INSERT INTO nilai (siswa_id, mapel, jenis, nilai, semester, tanggal) VALUES (?,?,?,?,?,?)').run(sid, mapel, jenis, Math.round(n * 100) / 100, semester, tgl); baru++; }
+      }
+      catat(ctx.user, 'nilai_massal', `${baru + ubah} nilai ${mapel} kelas #${kid}`);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { ok: true, baru, diperbarui: ubah, dilewati: kosong };
+  }
+  // Nilai yang sudah ada untuk satu kelas/mapel/jenis/semester (mengisi grid input)
+  function nilaiKelas(q, ctx) {
+    const kid = Number(q.kelas_id); lembagaOf('kelas', kid, ctx);
+    const semester = q.semester || null, mapel = str(q.mapel, 100), jenis = str(q.jenis, 40) || 'Ulangan Harian';
+    return db.prepare(`SELECT s.id siswa_id, s.nis, s.nama, (SELECT n.nilai FROM nilai n WHERE n.siswa_id = s.id AND lower(n.mapel) = lower(?) AND lower(COALESCE(n.jenis, '')) = lower(?) AND n.semester IS ? ORDER BY n.id DESC LIMIT 1) nilai
+      FROM siswa s WHERE s.kelas_id = ? AND s.status = 'aktif' ORDER BY s.nama`).all(mapel || '', jenis, semester, kid);
+  }
+
+  // ---- berkas unggahan (materi pelajaran, gambar soal) ----
+  function berkasTujuan(q, ctx) {
+    if (q.materi_id) { const m = db.prepare('SELECT id, lembaga_id FROM materi WHERE id = ?').get(Number(q.materi_id)); if (!m || !ctx.scope.ids.includes(m.lembaga_id)) throw new HttpError(404, 'Materi tidak ditemukan'); return { lembagaId: m.lembaga_id, materiId: m.id }; }
+    if (q.ujian_id) {
+      const u = db.prepare('SELECT id, lembaga_id FROM ujian WHERE id = ?').get(Number(q.ujian_id)); if (!u || !ctx.scope.ids.includes(u.lembaga_id)) throw new HttpError(404, 'Ujian tidak ditemukan');
+      if (db.prepare('SELECT 1 FROM ujian_peserta WHERE ujian_id = ?').get(u.id)) throw new HttpError(409, 'Ujian sudah dikerjakan, gambar tidak dapat diubah');
+      return { lembagaId: u.lembaga_id, ujianId: u.id, hanyaGambar: true };
+    }
+    throw new HttpError(400, 'Pilih materi atau ujian tujuan');
+  }
+  const daftarBerkas = (q, ctx) => { const t = berkasTujuan({ materi_id: q.materi_id }, ctx); return db.prepare('SELECT id, nama, ext, ukuran, dibuat_oleh, dibuat FROM berkas WHERE materi_id = ? ORDER BY id').all(t.materiId); };
+  function bolehLihatBerkas(b, ctx) {
+    if (ctx.user.role === 'siswa') {
+      const s = db.prepare('SELECT s.kelas_id, s.lembaga_id, s.status FROM siswa_user su JOIN siswa s ON s.id = su.siswa_id WHERE su.user_id = ?').get(ctx.user.id);
+      if (!s || s.status !== 'aktif') return false;
+      if (b.materi_id) { const m = db.prepare('SELECT lembaga_id, kelas_id FROM materi WHERE id = ?').get(b.materi_id); return !!m && m.lembaga_id === s.lembaga_id && (m.kelas_id === null || m.kelas_id === s.kelas_id); }
+      if (b.ujian_id) { const u = db.prepare("SELECT kelas_id FROM ujian WHERE id = ? AND status = 'terbit'").get(b.ujian_id); return !!u && u.kelas_id === s.kelas_id; }
+      return false;
+    }
+    return ctx.scope.ids.includes(b.lembaga_id);
+  }
+
   // ---- jadwal pelajaran ----
   function cekJadwal(d, row) {
     for (const k of ['mulai', 'selesai']) {
@@ -985,10 +1070,11 @@ function createApp(dbFile, opts = {}) {
       }
       const ins = db.prepare('INSERT INTO jadwal (lembaga_id, kelas_id, hari, mulai, selesai, judul, guru) VALUES (?,?,?,?,?,?,?)');
       for (const x of items) ins.run(lid, x.kn === null ? null : kelasDb.get(x.kn.toLowerCase()), x.hari, x.mulai, x.selesai, x.judul, x.guru);
+      if (body.coba) { db.exec('ROLLBACK'); return { ok: true, baris: items.length, kelas_baru: [...baru], disimpan: false }; }
       catat(ctx.user, 'impor_jadwal', `${items.length} baris, lembaga #${lid}${body.ganti ? ', mengganti jadwal lama' : ''}`);
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
-    return { ok: true, baris: items.length, kelas_baru: [...baru] };
+    return { ok: true, baris: items.length, kelas_baru: [...baru], disimpan: true };
   }
 
   // ---- rapor ----
@@ -1227,9 +1313,9 @@ function createApp(dbFile, opts = {}) {
     throw new HttpError(405, 'Metode tidak didukung');
   }
 
-  const readRaw = (req) => new Promise((resolve, reject) => {
+  const readRaw = (req, max = 1e6) => new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
-    req.on('data', (c) => { size += c.length; if (size > 1e6) { reject(new HttpError(413, 'Data terlalu besar')); req.destroy(); return; } chunks.push(c); });
+    req.on('data', (c) => { size += c.length; if (size > max) { reject(new HttpError(413, 'Data terlalu besar')); req.destroy(); return; } chunks.push(c); });
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
@@ -1307,7 +1393,7 @@ function createApp(dbFile, opts = {}) {
     if (isBendahara(ctx.user.role)) {
       if (!BENDAHARA_API.has(name) || (BENDAHARA_BACA.has(name) && method !== 'GET') || (keyEks && !KEY_KEUANGAN.has(keyEks))) throw new HttpError(403, 'Akses ditolak: akun bendahara hanya untuk keuangan');
     } else if (!KEUANGAN.has(ctx.user.role) && (API_KEUANGAN.has(name) || (keyEks && KEY_KEUANGAN.has(keyEks)))) throw new HttpError(403, 'Data keuangan hanya dapat diakses bendahara dan admin yayasan');
-    if (ctx.user.role === 'siswa' && !['me', 'logout', 'password', 'belajar'].includes(name)) throw new HttpError(403, 'Akses ditolak');
+    if (ctx.user.role === 'siswa' && !(['me', 'logout', 'password', 'belajar'].includes(name) || (name === 'berkas' && method === 'GET' && parts[1]))) throw new HttpError(403, 'Akses ditolak');
     if (name === 'belajar' && ctx.user.role !== 'siswa') throw new HttpError(403, 'Hanya untuk akun siswa');
     if (ctx.user.role === 'guru' && (!GURU_API.has(name) || (GURU_BACA_SAJA.has(name) && method !== 'GET'))) throw new HttpError(403, 'Akses ditolak');
     if (ctx.user.must_change && !['me', 'logout', 'password'].includes(name)) throw new HttpError(403, 'Anda harus mengganti password terlebih dahulu');
@@ -1453,6 +1539,66 @@ function createApp(dbFile, opts = {}) {
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'attachment; filename="akun-siswa.pdf"', 'Cache-Control': 'no-store' });
       return res.end(buf);
     }
+    if (name === 'template' && method === 'GET') {
+      const jenis = parts[1];
+      if (!jenisBoleh(ctx.user.role, jenis)) throw new HttpError(403, 'Template ini tidak tersedia untuk peran Anda');
+      const buf = jenis === 'siswa' ? templateSiswa() : imporSvc.template(jenis);
+      res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="template-${jenis}.xlsx"`, 'Cache-Control': 'no-store' });
+      return res.end(buf);
+    }
+    if (name === 'impor' && method === 'POST') {
+      const jenis = parts[1];
+      if (!jenisBoleh(ctx.user.role, jenis)) throw new HttpError(403, 'Anda tidak berhak mengimpor data ini');
+      const b = await readBody(req, 12e6);
+      if (jenis === 'siswa') return send(res, 200, imporSiswa(b, ctx));
+      if (jenis === 'jadwal') return send(res, 200, imporJadwal({ text: imporSvc.jadwalDariBerkas(b), ganti: !!b.ganti, buat_kelas: !!b.buat_kelas, coba: !b.simpan }, ctx));
+      return send(res, 200, imporSvc.proses(jenis, b, ctx));
+    }
+    if (name === 'nilai-massal') {
+      if (method === 'GET') return send(res, 200, nilaiKelas(q, ctx));
+      if (method === 'POST') return send(res, 200, nilaiMassal(await readBody(req), ctx));
+    }
+    if (name === 'ujian-soal-impor' && method === 'POST') {
+      const b = await readBody(req, 12e6), u = db.prepare('SELECT id FROM ujian WHERE id = ?').get(Number(b.ujian_id));
+      if (!u) throw new HttpError(404, 'Ujian tidak ditemukan');
+      const lama = ujianSvc.soalAdmin({ ujian_id: u.id }, ctx);
+      if (lama.terkunci) throw new HttpError(409, 'Soal terkunci karena sudah ada siswa yang mengerjakan');
+      const { soal, galat } = imporSvc.bacaSoal(b);
+      const ringkas = { terbaca: soal.length, galat: galat.slice(0, 50).map(([baris, pesan]) => ({ baris, pesan })), jumlah_galat: galat.length, mode: b.mode === 'ganti' ? 'ganti' : 'tambah',
+        contoh: soal.slice(0, 3).map((x) => ({ tipe: x.tipe, teks: x.teks.slice(0, 120), opsi: x.opsi, kunci: x.kunci })), disimpan: false };
+      if (!b.simpan) return send(res, 200, ringkas);
+      if (galat.length) throw new HttpError(400, `${galat.length} soal bermasalah (${galat[0][1]}). Perbaiki berkasnya, tidak ada yang disimpan.`);
+      if (!soal.length) throw new HttpError(400, 'Tidak ada soal pada berkas');
+      const gabung = (ringkas.mode === 'ganti' ? [] : lama.soal.map(({ tipe, teks, opsi, kunci, bobot, gambar_id }) => ({ tipe, teks, opsi, kunci, bobot, gambar_id }))).concat(soal.map(({ tipe, teks, opsi, kunci, bobot }) => ({ tipe, teks, opsi, kunci, bobot })));
+      ujianSvc.simpanSoal({ ujian_id: u.id, soal: gabung }, ctx);
+      return send(res, 200, { ...ringkas, disimpan: true, total_soal: gabung.length });
+    }
+    if (name === 'berkas') {
+      if (method === 'GET' && !parts[1]) return send(res, 200, daftarBerkas(q, ctx));
+      if (method === 'GET') {
+        const b = berkasSvc.info(parts[1]);
+        if (!b || !bolehLihatBerkas(b, ctx)) throw new HttpError(404, 'Berkas tidak ditemukan');
+        const isi = berkasSvc.isiBerkas(b);
+        if (!isi) throw new HttpError(404, 'Berkas tidak ditemukan');
+        res.writeHead(200, berkasSvc.header(b)); return res.end(isi);
+      }
+      if (method === 'POST' && !parts[1]) {
+        const t = berkasTujuan(q, ctx), nama = String(q.nama || '').slice(0, 200);
+        const jml = db.prepare(`SELECT COUNT(*) n FROM berkas WHERE ${t.materiId ? 'materi_id' : 'ujian_id'} = ?`).get(t.materiId || t.ujianId).n;
+        if (jml >= (t.materiId ? 15 : 60)) throw new HttpError(400, 'Jumlah berkas sudah mencapai batas');
+        const buf = await readRaw(req, (berkasSvc.maksMb + 1) * 1048576);
+        const r = berkasSvc.simpan({ ...t, nama, buf, oleh: ctx.user.nama });
+        catat(ctx.user, 'unggah_berkas', `${r.nama} (${r.ukuran} B)`);
+        return send(res, 200, r);
+      }
+      if (method === 'DELETE' && parts[1]) {
+        const b = berkasSvc.info(parts[1]);
+        if (!b || !ctx.scope.ids.includes(b.lembaga_id)) throw new HttpError(404, 'Berkas tidak ditemukan');
+        if (b.ujian_id && db.prepare('SELECT 1 FROM ujian_peserta WHERE ujian_id = ?').get(b.ujian_id)) throw new HttpError(409, 'Ujian sudah dikerjakan');
+        berkasSvc.hapus(b.id); catat(ctx.user, 'hapus_berkas', b.nama); return send(res, 200, { ok: true });
+      }
+      throw new HttpError(405, 'Metode tidak didukung');
+    }
     if (name === 'jadwal-kelas') return send(res, 200, jadwalKelas(q, ctx));
     if (name === 'jadwal-impor' && method === 'POST') {
       if (ctx.user.role === 'guru') throw new HttpError(403, 'Akses ditolak');
@@ -1499,7 +1645,7 @@ function createApp(dbFile, opts = {}) {
   });
   // Menghapus riwayat pesan WhatsApp yang lebih tua dari `hari` hari (sesuai Kebijakan Privasi).
   const purgeWaLog = (hari = WA_LOG_HARI) => Number(db.prepare("DELETE FROM wa_log WHERE dibuat < datetime('now', ?)").run(`-${Math.max(1, hari)} days`).changes);
-  return { server, db, purgeWaLog, purgePendaftar, ujian: ujianSvc };
+  return { server, db, purgeWaLog, purgePendaftar, ujian: ujianSvc, berkas: berkasSvc };
 }
 
 module.exports = { createApp };
@@ -1513,10 +1659,10 @@ if (require.main === module) {
   const keep = Number(process.env.BACKUP_KEEP) || 14, jam = Number(process.env.BACKUP_EVERY_HOURS ?? 24);
   // Backup otomatis: bila backup terakhir lebih tua dari (jam - 1) jam. BACKUP_EVERY_HOURS=0 mematikannya.
   const cek = () => {
-    try { if (jam > 0 && Date.now() - backupTerakhir(backupDir) > (jam - 1) * 3600e3) { const b = backupNow(app.db, backupDir, keep); console.log('Backup otomatis:', b.file); salinKeLuar(b.file); } }
+    try { if (jam > 0 && Date.now() - backupTerakhir(backupDir) > (jam - 1) * 3600e3) { const b = backupNow(app.db, backupDir, keep); console.log('Backup otomatis:', b.file); salinKeLuar(b.file); if (process.env.BACKUP_RCLONE_REMOTE) salinKeLuar(app.berkas.dir, process.env.BACKUP_RCLONE_REMOTE.replace(/\/?$/, '/berkas')); } }
     catch (e) { console.error('Backup otomatis gagal:', e.message); }
   };
-  const bersihkan = () => { try { app.purgePendaftar(); } catch (e) { console.error('Penghapusan pendaftar gagal:', e.message); } try { const n = app.purgeWaLog(Number(process.env.WA_LOG_DAYS) || WA_LOG_HARI); if (n) console.log(`Riwayat WhatsApp: ${n} pesan lama dihapus`); } catch (e) { console.error('Pembersihan riwayat gagal:', e.message); } };
+  const bersihkan = () => { try { app.berkas.bersihkanYatim(); } catch (e) { console.error('Pembersihan berkas gagal:', e.message); } try { app.purgePendaftar(); } catch (e) { console.error('Penghapusan pendaftar gagal:', e.message); } try { const n = app.purgeWaLog(Number(process.env.WA_LOG_DAYS) || WA_LOG_HARI); if (n) console.log(`Riwayat WhatsApp: ${n} pesan lama dihapus`); } catch (e) { console.error('Pembersihan riwayat gagal:', e.message); } };
   cek(); bersihkan(); const timer = setInterval(() => { cek(); bersihkan(); }, 3600e3);
   app.server.listen(port, () => console.log(`Administrasi Yayasan berjalan di http://localhost:${port}`));
   const berhenti = () => { clearInterval(timer); app.server.close(() => { try { app.db.close(); } catch { /* sudah tertutup */ } process.exit(0); }); setTimeout(() => process.exit(0), 5000).unref(); };

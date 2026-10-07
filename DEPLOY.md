@@ -86,7 +86,7 @@ buat backup manual dulu: `docker compose exec app node backup.js`.
   **Otomatis ke cloud (disarankan)**: image Docker sudah memuat `rclone`. Di server jalankan sekali `docker compose run --rm app rclone config`
   (konfigurasi tersimpan di volume `data`; untuk Google Drive pilih "headless" dan jalankan `rclone authorize "drive"` di komputer Anda, lalu tempel tokennya), buat remote bernama mis. `gdrive`, lalu isi `BACKUP_RCLONE_REMOTE=gdrive:backup-sekolah`
   di `.env` dan `docker compose up -d`. Tiap backup baru otomatis disalin ke sana; cek `docker compose logs app` untuk
-  "Backup disalin ke". Data berisi informasi anak: pakai akun penyimpanan khusus yayasan dengan akses terbatas.
+  "Backup disalin ke". Berkas materi pelajaran yang diunggah (folder `/data/berkas`) ikut disalin ke `REMOTE/berkas`; tanpa rclone, salin sendiri folder itu bersama backup database. Data berisi informasi anak: pakai akun penyimpanan khusus yayasan dengan akses terbatas.
 - **Memulihkan**:
   ```bash
   docker compose stop app

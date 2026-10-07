@@ -46,8 +46,11 @@ const kartuUjian = (u) => {
     <div class="s">${u.status === 'belum' ? 'Dibuka ' + waktu(u.mulai) : 'Sampai ' + waktu(u.selesai)} WIB</div><div style="margin-top:4px">${statusChip(u)}${u.nilai !== null ? ` <span class="chip">Nilai ${u.nilai}</span>` : u.menunggu_nilai ? ' <span class="chip">Menunggu penilaian guru</span>' : ''}</div></div>
     <div class="r">${aksi}</div></div>`;
 };
+const ikonBerkas = (e) => ({ pdf: '📕', doc: '📘', docx: '📘', ppt: '📙', pptx: '📙', xls: '📗', xlsx: '📗', mp3: '🎧', mp4: '🎬' }[e] || (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(e) ? '🖼' : '📎'));
+const ukuran = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 const kartuMateri = (m) => `<div class="card"><h3>${esc(m.judul)}</h3><div class="small muted">${esc(m.mapel || 'Umum')} · ${esc(String(m.dibuat).slice(0, 10))}</div>
-  ${m.isi ? `<p class="materi-isi">${esc(m.isi)}</p>` : ''}${m.tautan ? `<p><a href="${esc(m.tautan)}" target="_blank" rel="noopener noreferrer">Buka tautan materi ↗</a></p>` : ''}</div>`;
+  ${m.isi ? `<p class="materi-isi">${esc(m.isi)}</p>` : ''}${m.tautan ? `<p><a href="${esc(m.tautan)}" target="_blank" rel="noopener noreferrer">Buka tautan materi ↗</a></p>` : ''}
+  ${(m.berkas || []).map((b) => `<div class="item"><div><a href="/api/berkas/${b.id}" target="_blank" rel="noopener">${ikonBerkas(b.ext)} ${esc(b.nama)}</a><div class="s">${ukuran(b.ukuran)}</div></div></div>`).join('')}</div>`;
 
 const views = {
   beranda() {
@@ -104,7 +107,7 @@ function soalKe(i) {
   const nav = S.soal.map((x, k) => `<button data-k="${k}" class="${S.jawab[x.id] !== undefined ? 'done' : ''} ${k === i ? 'now' : ''}">${k + 1}</button>`).join('');
   $('#exam').innerHTML = `<div class="ex-top"><b>${esc(S.ujian.judul)}<br><span class="small" style="font-weight:400">${esc(S.ujian.mapel)}</span></b><span class="timer" id="timer">${fmt(sisa())}</span></div>
     <div class="ex-body">${i === 0 && S.ujian.petunjuk ? `<div class="card small" style="white-space:pre-wrap">${esc(S.ujian.petunjuk)}</div>` : ''}
-      <div class="small muted">Soal ${i + 1} dari ${S.soal.length} · bobot ${s.bobot}</div><div class="q">${esc(s.teks)}</div>
+      <div class="small muted">Soal ${i + 1} dari ${S.soal.length} · bobot ${s.bobot}</div><div class="q">${esc(s.teks)}</div>${s.gambar ? `<img src="${esc(s.gambar)}" alt="Gambar soal" class="soal-img">` : ''}
       ${s.tipe === 'pg' ? s.opsi.map((o, k) => `<button class="opt ${j === o.i ? 'on' : ''}" data-o="${o.i}"><b>${KODE[k]}</b><span>${esc(o.t)}</span></button>`).join('')
         : `<textarea id="uraian" placeholder="Tulis jawabanmu di sini…" maxlength="5000">${esc(j ?? '')}</textarea>`}
       <div class="saved" id="saved"></div><div class="grid">${nav}</div></div>

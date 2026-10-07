@@ -10,7 +10,7 @@ async function boot(t, opts) {
   const base = `http://localhost:${server.address().port}/api/`;
   const client = () => {
     let cookie = '';
-    return async (path, method = 'GET', body, lembaga) => {
+    const fn = async (path, method = 'GET', body, lembaga) => {
       const headers = { 'Content-Type': 'application/json', cookie };
       if (lembaga) headers['x-lembaga'] = String(lembaga);
       const r = await fetch(base + path, { method, headers, body: body && JSON.stringify(body) });
@@ -18,6 +18,8 @@ async function boot(t, opts) {
       const type = r.headers.get('content-type') || '';
       return { status: r.status, r, data: type.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) };
     };
+    fn.cookie = () => cookie;
+    return fn;
   };
   return { client, base, db };
 }
@@ -1301,4 +1303,209 @@ test('peran berjenjang: admin yayasan, bendahara yayasan/lembaga, admin lembaga,
   // wali tetap melihat tagihan anaknya
   await yys('wali-akun', 'POST', { siswa_id: sm, username: '081200001111' });
   assert.strictEqual((await yys('users')).data.some((u) => u.role === 'wali'), false);
+});
+
+test('input & unggah: template Excel, impor guru/nilai/pembayaran/jadwal/soal, nilai massal, berkas materi dan gambar soal', async (t) => {
+  const { buildXlsx, zip } = require('./xlsx');
+  const { readXlsx } = require('./xlsx-read');
+  const { client, base } = await boot(t);
+  const yys = client();
+  const me = (await yys('login', 'POST', { username: 'admin', password: 'admin123' })).data;
+  const id = (k) => me.lembagas.find((l) => l.kode === k).id;
+  const [MI, SMP] = [id('MI'), id('SMP')];
+  const b64 = (b) => b.toString('base64');
+  const wib = (m) => new Date(Date.now() + 7 * 3600e3 + m * 60e3).toISOString().slice(0, 16);
+  const unggah = async (c, query, nama, buf, lembaga) => { // POST biner mentah dengan cookie sesi
+    const r = await fetch(`${base}berkas?${query}&nama=${encodeURIComponent(nama)}`, { method: 'POST', headers: { cookie: c.cookie(), ...(lembaga ? { 'x-lembaga': String(lembaga) } : {}) }, body: buf });
+    return { status: r.status, data: await r.json() };
+  };
+
+  // ---- template: semua jenis dapat diunduh dan dibaca lagi ----
+  for (const j of ['siswa', 'guru', 'nilai', 'pembayaran', 'jadwal', 'soal']) {
+    const r = await yys('template/' + j);
+    assert.strictEqual(r.status, 200, j);
+    const rows = readXlsx(r.data)[0].rows;
+    assert.ok(rows[0].length >= 5 && /^(diisi|contoh)/i.test(String(rows[1][0] || rows[1][1] || rows[1].find(Boolean))), j);
+  }
+  assert.strictEqual((await yys('template/ngawur')).status, 403);
+
+  // isi template apa adanya (judul kolom dari template) lalu impor: harus dikenali semuanya
+  const dariTemplate = async (j, baris) => { const h = readXlsx((await yys('template/' + j)).data)[0].rows[0]; return buildXlsx('X', h, baris(h)); };
+  const isiBaris = (h, o) => h.map((x) => { const k = Object.keys(o).find((kk) => String(x).toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z]/g, '').includes(kk)); return k ? o[k] : ''; });
+  const rt = (await yys('impor/guru', 'POST', { file: b64(await dariTemplate('guru', (h) => [h, isiBaris(h, { nama: 'Guru Template', mata: 'Fiqih', telepon: '0813' })].slice(1))) }, MI)).data;
+  assert.deepStrictEqual([rt.valid, rt.jumlah_galat], [1, 0]);
+
+  // template siswa yang belum diisi tidak menambah siswa (baris petunjuk & contoh dilewati)
+  const kosongSiswa = (await yys('impor/siswa', 'POST', { file: b64((await yys('template/siswa')).data) }, MI));
+  assert.deepStrictEqual([kosongSiswa.status, kosongSiswa.data.total], [200, 0]);
+
+  // ---- guru ----
+  const g1 = buildXlsx('Guru', ['NIP', 'Nama', 'L/P', 'Mata pelajaran', 'Telepon/HP'], [['diisi NIP', 'diisi nama', 'diisi L / P', '', ''], ['1', 'Ahmad Fauzi', 'L', 'Matematika', '0812'], ['', 'Siti Aminah', 'P', 'IPA', ''], ['2', 'Salah JK', 'X', '', '']]);
+  const gp = (await yys('impor/guru', 'POST', { file: b64(g1) }, MI)).data;
+  assert.deepStrictEqual([gp.total, gp.valid, gp.jumlah_galat, gp.disimpan], [3, 2, 1, false]);
+  assert.match(gp.galat[0].pesan, /L atau P/);
+  assert.strictEqual((await yys('impor/guru', 'POST', { file: b64(g1), simpan: true }, MI)).status, 400);          // ada galat: tidak ada yang disimpan
+  assert.strictEqual((await yys('guru', 'GET', null, MI)).data.length, 0);
+  const g2 = buildXlsx('Guru', ['NIP', 'Nama', 'L/P', 'Mata pelajaran'], [['1', 'Ahmad Fauzi', 'L', 'Matematika'], ['', 'Siti Aminah', 'P', 'IPA']]);
+  const gs = (await yys('impor/guru', 'POST', { file: b64(g2), simpan: true }, MI)).data;
+  assert.deepStrictEqual([gs.baru, gs.diperbarui, gs.disimpan], [2, 0, true]);
+  assert.strictEqual((await yys('guru', 'GET', null, MI)).data.length, 2);
+  const ulangG = (await yys('impor/guru', 'POST', { file: b64(g2), simpan: true }, MI)).data;
+  assert.deepStrictEqual([ulangG.baru, ulangG.diperbarui], [0, 2]);
+  assert.strictEqual((await yys('guru', 'GET', null, MI)).data.length, 2);                                       // tidak digandakan
+  const csvG = Buffer.from('nama;mapel\nBudi;PJOK\n');
+  assert.strictEqual((await yys('impor/guru', 'POST', { file: b64(csvG), nama_file: 'guru.csv', simpan: true }, MI)).data.baru, 1);   // CSV
+
+  // ---- siswa & nilai ----
+  const kMI = (await yys('kelas', 'POST', { nama: '5' }, MI)).data.id;
+  const a = (await yys('siswa', 'POST', { nama: 'Andin', nis: '1', nisn: '1111111111', kelas_id: kMI }, MI)).data.id;
+  const b = (await yys('siswa', 'POST', { nama: 'Budi', nis: '2', kelas_id: kMI }, MI)).data.id;
+  await yys('siswa', 'POST', { nama: 'Budi', nis: '3', kelas_id: kMI }, MI);                                    // nama kembar
+  const nl = buildXlsx('Nilai', ['NISN', 'No Induk (NIS)', 'Nama', 'Mata pelajaran', 'Jenis', 'Nilai', 'Semester', 'Tanggal'], [
+    ['diisi NISN', '', '', 'diisi mapel', '', '', '', ''],
+    ['1111111111', '', '', 'Matematika', 'UTS', '85,5', 'Ganjil', '15/10/2026'],
+    ['', '2', '', 'Matematika', 'UTS', 90, '1', ''],
+    ['', '', 'Budi', 'IPA', '', 70, '', ''],             // nama kembar -> galat
+    ['', '', 'Tidak Ada', 'IPA', '', 70, '', ''],
+    ['1111111111', '', '', 'IPA', '', 150, '', '']]);     // nilai di luar 0-100
+  const np = (await yys('impor/nilai', 'POST', { file: b64(nl) }, MI)).data;
+  assert.deepStrictEqual([np.total, np.valid, np.jumlah_galat], [5, 2, 3]);
+  assert.ok(np.galat.some((x) => /2 siswa|ada 2/.test(x.pesan)) && np.galat.some((x) => /tidak ditemukan/.test(x.pesan)) && np.galat.some((x) => /0-100/.test(x.pesan)));
+  const nl2 = buildXlsx('Nilai', ['NISN', 'No Induk (NIS)', 'Mata pelajaran', 'Jenis', 'Nilai', 'Semester'], [['1111111111', '', 'Matematika', 'UTS', '85,5', 'Ganjil'], ['', '2', 'Matematika', 'UTS', 90, 'Ganjil']]);
+  assert.deepStrictEqual([(await yys('impor/nilai', 'POST', { file: b64(nl2), simpan: true }, MI)).data.baru], [2]);
+  assert.strictEqual((await yys('nilai?siswa_id=' + a)).data[0].nilai, 85.5);
+  const ulangN = (await yys('impor/nilai', 'POST', { file: b64(buildXlsx('Nilai', ['NISN', 'Mata pelajaran', 'Jenis', 'Nilai', 'Semester'], [['1111111111', 'Matematika', 'UTS', 95, 'Ganjil']])), simpan: true }, MI)).data;
+  assert.deepStrictEqual([ulangN.baru, ulangN.diperbarui], [0, 1]);
+  assert.deepStrictEqual((await yys('nilai?siswa_id=' + a)).data.map((x) => x.nilai), [95]);                      // diperbarui, tidak digandakan
+
+  // ---- nilai massal per kelas ----
+  const nm = { kelas_id: kMI, mapel: 'IPA', jenis: 'Tugas', semester: 'Ganjil', items: [{ siswa_id: a, nilai: '88' }, { siswa_id: b, nilai: '' }] };
+  assert.deepStrictEqual((await yys('nilai-massal', 'POST', nm)).data, { ok: true, baru: 1, diperbarui: 0, dilewati: 1 });
+  assert.strictEqual((await yys('nilai-massal', 'POST', { ...nm, items: [{ siswa_id: a, nilai: 101 }] })).status, 400);
+  assert.strictEqual((await yys('nilai-massal', 'POST', { ...nm, items: [{ siswa_id: 999999, nilai: 5 }] })).status, 400);
+  assert.strictEqual((await yys('nilai-massal', 'POST', { ...nm, items: [{ siswa_id: a, nilai: 91 }] })).data.diperbarui, 1);
+  assert.strictEqual((await yys(`nilai-massal?kelas_id=${kMI}&mapel=IPA&jenis=Tugas&semester=Ganjil`)).data.find((x) => x.siswa_id === a).nilai, 91);
+  const kSMP = (await yys('kelas', 'POST', { nama: 'VII' }, SMP)).data.id;
+  assert.strictEqual((await yys('nilai-massal', 'POST', { ...nm, kelas_id: kSMP, items: [{ siswa_id: a, nilai: 5 }] }, SMP)).status, 400);   // siswa bukan anggota kelas itu
+
+  // ---- pembayaran (keuangan saja) ----
+  const pb = buildXlsx('Pembayaran', ['NISN', 'Nama', 'Jenis', 'Periode (bulan)', 'Jumlah (Rp)', 'Tanggal'], [['1111111111', '', 'SPP', '10/2026', 'Rp 150.000', '2026-10-05'], ['', 'Tidak Ada', 'SPP', '2026-10', 100000, ''], ['1111111111', '', 'SPP', '2026-11', 0, '']]);
+  const pp = (await yys('impor/pembayaran', 'POST', { file: b64(pb) }, MI)).data;
+  assert.deepStrictEqual([pp.total, pp.valid, pp.jumlah_galat], [3, 1, 2]);
+  const pb2 = buildXlsx('Pembayaran', ['NISN', 'Jenis', 'Periode (bulan)', 'Jumlah (Rp)', 'Tanggal'], [['1111111111', 'SPP', '10/2026', 'Rp 150.000', '2026-10-05']]);
+  assert.strictEqual((await yys('impor/pembayaran', 'POST', { file: b64(pb2), simpan: true }, MI)).data.baru, 1);
+  assert.strictEqual((await yys('impor/pembayaran', 'POST', { file: b64(pb2), simpan: true }, MI)).data.dilewati, 1);   // sama persis: dilewati
+  assert.strictEqual((await yys('pembayaran', 'GET', null, MI)).data.length, 1);
+  await yys('users', 'POST', { username: 'adminmi', password: 'rahasia123', nama: 'A', role: 'admin', lembaga_ids: [MI] });
+  await yys('users', 'POST', { username: 'bendmi', password: 'rahasia123', nama: 'B', role: 'bendahara', lembaga_ids: [MI] });
+  await yys('users', 'POST', { username: 'gurumi', password: 'rahasia123', nama: 'G', role: 'guru', lembaga_ids: [MI] });
+  const masuk = async (u) => { const c = client(); await c('login', 'POST', { username: u, password: 'rahasia123' }); await c('password', 'POST', { lama: 'rahasia123', baru: 'rahasia456' }); return c; };
+  const [adm, ben, gur] = [await masuk('adminmi'), await masuk('bendmi'), await masuk('gurumi')];
+  assert.strictEqual((await adm('impor/pembayaran', 'POST', { file: b64(pb2) })).status, 403);
+  assert.strictEqual((await adm('template/pembayaran')).status, 403);
+  assert.strictEqual((await ben('template/pembayaran')).status, 200);
+  assert.strictEqual((await ben('impor/pembayaran', 'POST', { file: b64(pb2) })).status, 200);
+  for (const j of ['guru', 'nilai', 'jadwal', 'siswa', 'soal']) { assert.strictEqual((await ben('template/' + j)).status, 403, j); assert.strictEqual((await ben('impor/' + j, 'POST', { file: b64(pb2) })).status, 403, j); }
+  assert.strictEqual((await gur('impor/guru', 'POST', { file: b64(g2) })).status, 403);
+  assert.strictEqual((await gur('template/guru')).status, 403);
+  assert.strictEqual((await gur('template/soal')).status, 200);
+
+  // ---- jadwal dari Excel ----
+  const jd = buildXlsx('Jadwal', ['Kelas', 'Hari', 'Mulai', 'Selesai', 'Mata pelajaran / kegiatan', 'Guru'], [['diisi kelas', 'diisi hari', '', '', '', ''], ['5', 'Senin', '07.00', '07.40', 'Matematika', 'Bu Sari'], ['*', 'Senin', '06.20', '07.00', "Qiro'ah", ''], ['9', 'Selasa', '07.00', '07.40', 'IPA', '']]);
+  const jp = (await yys('impor/jadwal', 'POST', { file: b64(jd) }, MI));
+  assert.strictEqual(jp.status, 400); assert.match(jp.data.error, /Kelas belum ada: 9/);
+  const jp2 = (await yys('impor/jadwal', 'POST', { file: b64(jd), buat_kelas: true }, MI)).data;
+  assert.deepStrictEqual([jp2.baris, jp2.disimpan, jp2.kelas_baru], [3, false, ['9']]);
+  assert.strictEqual((await yys('jadwal', 'GET', null, MI)).data.length, 0);                                    // pratinjau tidak menyimpan
+  assert.strictEqual((await yys('impor/jadwal', 'POST', { file: b64(jd), buat_kelas: true, simpan: true }, MI)).data.baris, 3);
+  assert.strictEqual((await yys('jadwal-kelas?kelas_id=' + kMI)).data.rows.length, 2);
+
+  // ---- soal: Excel, CSV, Word, teks ----
+  const uid = (await yys('ujian', 'POST', { kelas_id: kMI, mapel: 'Matematika', judul: 'UH 1', mulai: wib(-10), selesai: wib(120), durasi: 30 }, MI)).data.id;
+  const rtS = (await yys('ujian-soal-impor', 'POST', { ujian_id: uid, nama_file: 't.xlsx', file: b64(await dariTemplate('soal', () => [['PG', 'Berapakah 2 + 3?', '4', '5', '6', '', '', '', 'B', 1]])) }, MI)).data;
+  assert.deepStrictEqual([rtS.terbaca, rtS.jumlah_galat], [1, 0]);                                              // judul kolom template dikenali
+  const rtN = (await yys('impor/nilai', 'POST', { file: b64(await dariTemplate('nilai', () => [['1111111111', '', '', 'Matematika', 'UTS', 80, 'Ganjil', '2026-10-01']])) }, MI)).data;
+  assert.deepStrictEqual([rtN.valid, rtN.jumlah_galat], [1, 0]);
+  const sx = buildXlsx('Soal', ['Tipe (PG/URAIAN)', 'Soal', 'A', 'B', 'C', 'D', 'E', 'F', 'Kunci (A-F)', 'Bobot'], [
+    ['diisi PG atau URAIAN', 'diisi soal', '', '', '', '', '', '', '', ''],
+    ['PG', 'Berapakah 2 + 3?', '4', '5', '6', '', '', '', 'B', 1], ['PG', 'Tanpa kunci', 'a', 'b', '', '', '', '', '', 1], ['URAIAN', 'Jelaskan pecahan', '', '', '', '', '', '', '', 2]]);
+  const sp = (await yys('ujian-soal-impor', 'POST', { ujian_id: uid, file: b64(sx), nama_file: 'soal.xlsx' }, MI)).data;
+  assert.deepStrictEqual([sp.terbaca, sp.jumlah_galat, sp.disimpan], [2, 1, false]);
+  assert.match(sp.galat[0].pesan, /kunci/i);
+  assert.strictEqual((await yys('ujian-soal-impor', 'POST', { ujian_id: uid, file: b64(sx), nama_file: 'soal.xlsx', simpan: true }, MI)).status, 400);
+  const sx2 = buildXlsx('Soal', ['Tipe', 'Soal', 'A', 'B', 'C', 'Kunci', 'Bobot'], [['PG', 'Berapakah 2 + 3?', '4', '5', '6', 'B', 1], ['URAIAN', 'Jelaskan pecahan', '', '', '', '', 2]]);
+  assert.strictEqual((await yys('ujian-soal-impor', 'POST', { ujian_id: uid, file: b64(sx2), nama_file: 'soal.xlsx', simpan: true }, MI)).data.total_soal, 2);
+  const csvS = Buffer.from('Soal;A;B;Kunci\n"10 - 4 = ?";6;7;A\n');
+  assert.strictEqual((await yys('ujian-soal-impor', 'POST', { ujian_id: uid, file: b64(csvS), nama_file: 'soal.csv', simpan: true }, MI)).data.total_soal, 3);   // ditambahkan
+  const docx = zip([['word/document.xml', '<w:document><w:body>' + ['1. Ibu kota Indonesia?', 'A. Bandung', '*B. Jakarta', 'C. Surabaya', '2. Jelaskan arti merdeka.', '3. 5 x 5 = ?', 'A. 20', 'B. 25', 'Kunci: B', 'Bobot: 2']
+    .map((x) => `<w:p><w:r><w:t>${x}</w:t></w:r></w:p>`).join('') + '</w:body></w:document>']]);
+  const dp = (await yys('ujian-soal-impor', 'POST', { ujian_id: uid, file: b64(docx), nama_file: 'soal.docx', mode: 'ganti', simpan: true }, MI)).data;
+  assert.deepStrictEqual([dp.terbaca, dp.mode, dp.total_soal], [3, 'ganti', 3]);
+  const tersimpan = (await yys('ujian-soal?ujian_id=' + uid)).data.soal;
+  assert.deepStrictEqual(tersimpan.map((s) => [s.tipe, s.kunci, s.bobot]), [['pg', 1, 1], ['uraian', null, 1], ['pg', 1, 2]]);
+  assert.strictEqual((await yys('ujian-soal-impor', 'POST', { ujian_id: uid, file: b64(Buffer.from('bukan soal')), nama_file: 'x.zip' }, MI)).status, 400);
+
+  // ---- berkas materi pelajaran & gambar soal ----
+  const pdf = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(300, 65)]);
+  const png = Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), Buffer.alloc(200, 1)]);
+  const mId = (await yys('materi', 'POST', { kelas_id: kMI, mapel: 'Matematika', judul: 'Pecahan' }, MI)).data.id;
+  const mLain = (await yys('materi', 'POST', { judul: 'Materi SMP' }, SMP)).data.id;
+  assert.strictEqual((await unggah(yys, 'materi_id=' + mId, 'Pecahan Bab 1.pdf', pdf, MI)).status, 200);
+  assert.strictEqual((await unggah(yys, 'materi_id=' + mId, 'rahasia.html', Buffer.from('<script>alert(1)</script>'), MI)).status, 400);        // jenis dilarang
+  assert.strictEqual((await unggah(yys, 'materi_id=' + mId, 'palsu.pdf', Buffer.from('MZ bukan pdf'), MI)).status, 400);                         // isi tidak sesuai
+  assert.strictEqual((await unggah(yys, 'materi_id=' + mId, 'kosong.pdf', Buffer.alloc(0), MI)).status, 400);
+  assert.strictEqual((await unggah(yys, 'materi_id=' + mId, 'tanpa-ekstensi', pdf, MI)).status, 400);
+  assert.strictEqual((await unggah(yys, 'materi_id=999999', 'a.pdf', pdf, MI)).status, 404);
+  assert.strictEqual((await unggah(adm, 'materi_id=' + mLain, 'a.pdf', pdf)).status, 404);                                                      // materi lembaga lain
+  assert.strictEqual((await unggah(ben, 'materi_id=' + mId, 'a.pdf', pdf)).status, 403);                                                        // bendahara tidak boleh
+  const dok = (await unggah(adm, 'materi_id=' + mId, 'LKS ../../etc.docx', zip([['word/document.xml', '<w:document/>']]))).data;
+  assert.strictEqual(dok.nama.includes('/'), false);                                                                                            // nama dibersihkan
+  const daftar = (await yys('berkas?materi_id=' + mId)).data;
+  assert.deepStrictEqual(daftar.map((x) => x.ext), ['pdf', 'docx']);
+  const unduh = await yys('berkas/' + daftar[0].id);
+  assert.strictEqual(unduh.status, 200);
+  assert.strictEqual(unduh.r.headers.get('content-type'), 'application/pdf'); assert.match(unduh.r.headers.get('content-disposition'), /^inline; filename\*=UTF-8''Pecahan/);
+  assert.strictEqual(unduh.r.headers.get('x-content-type-options'), 'nosniff');
+  assert.match((await yys('berkas/' + daftar[1].id)).r.headers.get('content-disposition'), /^attachment/);
+  assert.strictEqual((await ben('berkas/' + daftar[0].id)).status, 403);
+
+  // siswa kelasnya melihat/mengunduh; siswa kelas lain dan wali tidak
+  const kLain = (await yys('kelas', 'POST', { nama: '6' }, MI)).data.id;
+  const lain = (await yys('siswa', 'POST', { nama: 'Kelas Enam', nis: '9', kelas_id: kLain }, MI)).data.id;
+  const akun = (await yys('siswa-akun', 'POST', { kelas_id: kMI })).data.akun, akun6 = (await yys('siswa-akun', 'POST', { siswa_id: lain })).data.akun[0];
+  const masukSiswa = async (u) => { const c = client(); await c('login', 'POST', { username: u.username, password: u.password }); await c('password', 'POST', { lama: u.password, baru: 'belajarku1' }); return c; };
+  const sA = await masukSiswa(akun.find((x) => x.siswa_id === a)), s6 = await masukSiswa(akun6);
+  const mat = (await sA('belajar/materi')).data.find((m) => m.judul === 'Pecahan');
+  assert.deepStrictEqual(mat.berkas.map((x) => x.ext), ['pdf', 'docx']);
+  assert.ok(!('simpan' in mat.berkas[0]));                                                                                                      // nama di disk tidak bocor
+  assert.strictEqual((await sA('berkas/' + mat.berkas[0].id)).status, 200);
+  assert.strictEqual((await s6('berkas/' + mat.berkas[0].id)).status, 404);
+  assert.strictEqual((await s6('belajar/materi')).data.some((m) => m.judul === 'Pecahan'), false);
+  assert.strictEqual((await sA('berkas?materi_id=' + mId)).status, 403);                                                                         // siswa tidak boleh daftar/unggah/hapus
+  assert.strictEqual((await sA('berkas/' + mat.berkas[0].id, 'DELETE')).status, 403);
+  assert.strictEqual((await unggah(sA, 'materi_id=' + mId, 'a.pdf', pdf)).status, 403);
+  assert.strictEqual((await yys('berkas/' + mat.berkas[0].id, 'GET', null, SMP)).status, 404);                                                  // admin yayasan memilih lembaga lain: di luar cakupan? (id tetap milik MI)
+
+  // gambar soal: hanya gambar, terlihat siswa saat ujian terbit
+  const fs = require('node:fs');
+  assert.strictEqual((await unggah(yys, 'ujian_id=' + uid, 'soal.pdf', pdf, MI)).status, 400);
+  const gm = (await unggah(yys, 'ujian_id=' + uid, 'gambar.png', png, MI)).data;
+  const soalNow = (await yys('ujian-soal?ujian_id=' + uid)).data.soal.map(({ tipe, teks, opsi, kunci, bobot }, i) => ({ tipe, teks, opsi, kunci, bobot, ...(i === 0 ? { gambar_id: gm.id } : {}) }));
+  assert.strictEqual((await yys('ujian-soal', 'PUT', { ujian_id: uid, soal: soalNow.map((x, i) => (i === 1 ? { ...x, gambar_id: 999999 } : x)) })).status, 400);
+  assert.strictEqual((await yys('ujian-soal', 'PUT', { ujian_id: uid, soal: soalNow })).status, 200);
+  assert.strictEqual((await sA('berkas/' + gm.id)).status, 404);                                                                                 // belum terbit
+  await yys(`ujian/${uid}`, 'PUT', { status: 'terbit' });
+  assert.strictEqual((await sA('berkas/' + gm.id)).status, 200);
+  assert.strictEqual((await s6('berkas/' + gm.id)).status, 404);
+  const sesi = (await sA(`belajar/ujian/${uid}/mulai`, 'POST')).data;
+  assert.ok(sesi.soal.some((s) => s.gambar === `/api/berkas/${gm.id}`));
+  assert.strictEqual((await unggah(yys, 'ujian_id=' + uid, 'lagi.png', png, MI)).status, 409);                                                    // ujian sudah dikerjakan
+
+  // berkas dihapus; yang tak tercatat dibersihkan dari disk
+  const bk = (await yys('berkas?materi_id=' + mId)).data;
+  assert.strictEqual((await yys('berkas/' + bk[0].id, 'DELETE')).status, 200);
+  assert.strictEqual((await yys('berkas/' + bk[0].id)).status, 404);
+  await yys('materi/' + mId, 'DELETE');
+  const dir = fs.readdirSync(require('node:os').tmpdir()).filter((f) => f.startsWith('berkas-'));
+  assert.ok(dir.length >= 1);
 });

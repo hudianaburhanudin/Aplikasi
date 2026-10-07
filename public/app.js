@@ -182,6 +182,102 @@ function crudPage(cfg) {
   });
 }
 
+// ---- unggah/impor berkas ----
+const ukuranTeks = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+async function unggahBerkas(query, file) {
+  const r = await fetch('/api/berkas?' + qs({ ...query, nama: file.name }), { method: 'POST', headers: { 'X-Lembaga': String(scope) }, body: file });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Gagal mengunggah');
+  return d;
+}
+// Dialog impor Excel/CSV generik: pilih berkas -> pratinjau (galat per baris) -> simpan
+function imporExcel(jenis, judul, load, { opsi = [] } = {}) {
+  let file = null, sheet = '';
+  const dlg = $('#dlg'), f = $('#dlgForm');
+  dlg.classList.add('wide');
+  const gambar = (r, pesan) => {
+    f.innerHTML = `<h3>Impor ${esc(judul)} dari Excel</h3>
+      <p class="small muted">Unduh <a href="#" id="tpl">template ${esc(judul.toLowerCase())}</a>, isi, lalu pilih berkasnya (.xlsx atau .csv). Baris petunjuk dan contoh di template otomatis dilewati. Tidak ada yang tersimpan sebelum Anda menekan Simpan.</p>
+      <input type="file" id="impF" accept=".xlsx,.csv,.txt">
+      ${opsi.map((o) => `<label class="chk"><input type="checkbox" id="o_${o.k}" ${o.on ? 'checked' : ''}> ${esc(o.label)}</label>`).join('')}
+      ${r ? `<div class="card">${r.sheets && r.sheets.length > 1 ? `<label>Sheet <select id="impS">${r.sheets.map((x) => `<option ${x === r.sheet ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>` : ''}
+        <p style="margin:6px 0"><b>${r.total}</b> baris terbaca: <b style="color:var(--ok)">${r.valid} siap</b>${r.jumlah_galat ? `, <b style="color:var(--bad)">${r.jumlah_galat} bermasalah</b>` : ''}.
+        ${r.baru !== undefined ? `Baru <b>${r.baru}</b>${r.diperbarui !== undefined ? `, diperbarui <b>${r.diperbarui}</b>` : ''}${r.dilewati ? `, dilewati (sudah ada) <b>${r.dilewati}</b>` : ''}${r.total_rp ? `, total <b>${rp(r.total_rp)}</b>` : ''}.` : ''}</p>
+        ${r.kolom_diabaikan && r.kolom_diabaikan.length ? `<p class="small muted">Kolom diabaikan: ${r.kolom_diabaikan.slice(0, 10).map(esc).join(', ')}</p>` : ''}
+        ${r.galat.length ? `<div class="tablewrap" style="max-height:30vh;overflow:auto"><table><thead><tr><th>Baris</th><th>Masalah</th></tr></thead><tbody>${r.galat.map((g) => `<tr><td>${g.baris}</td><td>${esc(g.pesan)}</td></tr>`).join('')}</tbody></table></div><p class="small">Perbaiki baris di atas pada berkas Excel lalu pilih ulang berkasnya.</p>` : ''}</div>` : ''}
+      <p class="error" id="formErr">${esc(pesan || '')}</p>
+      <div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button>${r && !r.jumlah_galat && r.valid ? '<button type="button" class="btn primary" id="impGo">Simpan</button>' : ''}</div>`;
+    $('#cancelBtn').onclick = () => dlg.close(); f.onsubmit = (e) => e.preventDefault();
+    $('#tpl').onclick = (e) => { e.preventDefault(); download('template/' + jenis); };
+    $('#impF').onchange = async (e) => { file = e.target.files[0]; sheet = ''; await baca(false); };
+    opsi.forEach((o) => { $('#o_' + o.k).onchange = () => baca(false); });
+    if ($('#impS')) $('#impS').onchange = async (e) => { sheet = e.target.value; await baca(false); };
+    if ($('#impGo')) $('#impGo').onclick = () => baca(true);
+  };
+  const baca = async (simpan) => {
+    if (!file) return;
+    const dipilih = Object.fromEntries(opsi.map((o) => [o.k, !!($('#o_' + o.k) || {}).checked]));
+    try {
+      $('#formErr').textContent = simpan ? 'Menyimpan…' : 'Membaca berkas…';
+      const r = await api('impor/' + jenis, { method: 'POST', body: { file: await b64(file), nama_file: file.name, sheet, simpan, ...dipilih } });
+      if (simpan) { dlg.close(); toast(r.dilewati !== undefined && r.diperbarui === undefined ? `${r.baru ?? r.baris} data disimpan` : `${r.baru ?? r.baris} baru${r.diperbarui !== undefined ? `, ${r.diperbarui} diperbarui` : ''}`); load(); } else {
+        if (jenis === 'jadwal') { r.total = r.baris; r.valid = r.baris; r.galat = []; r.jumlah_galat = 0; r.sheets = []; }
+        gambar(r); opsi.forEach((o) => { if (dipilih[o.k]) $('#o_' + o.k).checked = true; });
+      }
+    } catch (err) { if ($('#formErr')) $('#formErr').textContent = err.message; else toast(err.message, true); }
+  };
+  gambar(null); dlg.showModal();
+}
+const tombolImpor = (jenis, judul, opts) => [{ label: 'Impor Excel', run: (load) => imporExcel(jenis, judul, load, opts) }, { label: '⬇ Template', run: () => download('template/' + jenis) }];
+
+// Input nilai satu kelas sekaligus (seperti lembar nilai)
+const inputNilaiKelas = guard(async (load) => {
+  const kelas = await optKelas();
+  const dlg = $('#dlg'), f = $('#dlgForm'); dlg.classList.add('wide');
+  f.innerHTML = `<h3>Input Nilai per Kelas</h3>
+    <div class="fields"><label>Kelas<select id="nk">${kelas.map((k) => `<option value="${k.value}">${esc(k.label)}</option>`).join('')}</select></label><label>Mata pelajaran<input id="nm" placeholder="mis. Matematika"></label>
+    <label>Jenis<select id="nj">${['Tugas', 'Ulangan Harian', 'UTS', 'UAS'].map((v) => `<option ${v === 'Ulangan Harian' ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label>Semester<select id="ns"><option>Ganjil</option><option>Genap</option></select></label><label>Tanggal<input id="nt" type="date" value="${today()}"></label></div>
+    <div class="bar"><button type="button" class="btn" id="nmuat">Tampilkan daftar siswa</button></div><div id="ngrid"></div><p class="error" id="formErr"></p>
+    <div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button><button type="button" class="btn primary" id="nsimpan" disabled>Simpan semua nilai</button></div>`;
+  $('#cancelBtn').onclick = () => dlg.close(); f.onsubmit = (e) => e.preventDefault();
+  const param = () => ({ kelas_id: $('#nk').value, mapel: $('#nm').value.trim(), jenis: $('#nj').value, semester: $('#ns').value });
+  $('#nmuat').onclick = guard(async () => {
+    const p = param(); if (!p.kelas_id || !p.mapel) return toast('Pilih kelas dan isi mata pelajaran', true);
+    const rows = await api('nilai-massal?' + qs(p));
+    $('#ngrid').innerHTML = rows.length ? `<div class="tablewrap" style="max-height:44vh;overflow:auto"><table><thead><tr><th>NIS</th><th>Nama</th><th style="width:110px">Nilai (0-100)</th></tr></thead><tbody>${rows.map((r, i) => `<tr><td>${esc(r.nis)}</td><td>${esc(r.nama)}</td><td><input type="text" inputmode="decimal" autocomplete="off" data-s="${r.siswa_id}" data-i="${i}" value="${r.nilai ?? ''}" style="width:100px"></td></tr>`).join('')}</tbody></table></div><p class="small muted">Kosongkan nilai yang belum ada (boleh memakai koma, mis. 77,5). Tekan Enter untuk pindah ke baris berikutnya.</p>` : '<div class="empty">Tidak ada siswa aktif di kelas ini.</div>';
+    $('#nsimpan').disabled = !rows.length;
+    $('#ngrid').querySelectorAll('input').forEach((el) => { el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); const nx = $('#ngrid').querySelector(`input[data-i="${Number(el.dataset.i) + 1}"]`); if (nx) nx.focus(); } }; });
+  });
+  $('#nsimpan').onclick = async () => {
+    const p = param(), items = [...$('#ngrid').querySelectorAll('input')].map((el) => ({ siswa_id: Number(el.dataset.s), nilai: el.value }));
+    try { const r = await api('nilai-massal', { method: 'POST', body: { ...p, tanggal: $('#nt').value, items } }); dlg.close(); toast(`${r.baru} nilai baru, ${r.diperbarui} diperbarui`); load(); }
+    catch (e) { $('#formErr').textContent = e.message; }
+  };
+  dlg.showModal();
+});
+// Berkas materi pelajaran: daftar, unggah (boleh beberapa sekaligus), hapus
+const berkasMateri = guard(async (m) => {
+  const dlg = $('#dlg'), f = $('#dlgForm'); dlg.classList.remove('wide');
+  const gambar = guard(async () => {
+    const list = await api('berkas?' + qs({ materi_id: m.id }));
+    f.innerHTML = `<h3>Berkas materi · ${esc(m.judul)}</h3>
+      <p class="small muted">PDF, Word, PowerPoint, Excel, gambar, audio (mp3), video (mp4), teks. Maksimal 20 MB per berkas, 15 berkas per materi. Siswa kelas ini membukanya di aplikasi Belajar.</p>
+      <div class="tablewrap">${list.length ? `<table><tbody>${list.map((b) => `<tr><td><a href="/api/berkas/${b.id}" target="_blank" rel="noopener">📎 ${esc(b.nama)}</a><div class="small muted">${ukuranTeks(b.ukuran)} · ${esc(String(b.dibuat).slice(0, 10))}</div></td><td class="act"><button type="button" class="btn small danger" data-h="${b.id}">Hapus</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Belum ada berkas.</div>'}</div>
+      <input type="file" id="bf" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.jpg,.jpeg,.png,.gif,.webp,.mp3,.mp4"><p class="error" id="formErr"></p>
+      <div class="actions"><button type="button" class="btn primary" id="cancelBtn">Selesai</button></div>`;
+    $('#cancelBtn').onclick = () => dlg.close(); f.onsubmit = (e) => e.preventDefault();
+    f.querySelectorAll('[data-h]').forEach((b) => { b.onclick = guard(async () => { if (!confirm('Hapus berkas ini?')) return; await api('berkas/' + b.dataset.h, { method: 'DELETE' }); gambar(); }); });
+    $('#bf').onchange = async (e) => {
+      for (const file of e.target.files) {
+        try { $('#formErr').textContent = `Mengunggah ${file.name}…`; await unggahBerkas({ materi_id: m.id }, file); } catch (err) { $('#formErr').textContent = `${file.name}: ${err.message}`; return; }
+      }
+      toast('Berkas diunggah'); gambar();
+    };
+  });
+  await gambar(); dlg.showModal();
+});
+
 const pages = {};
 const siswaFilter = () => qs({ kelas_id: kelasFilter(), status: (document.querySelector('#main [data-f=status]') || {}).value });
 const b64 = (file) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => no(new Error('Berkas tidak dapat dibaca')); r.readAsDataURL(file); });
@@ -239,6 +335,7 @@ pages.siswa = crudPage({
   }) }],
   extra: [
     { label: 'Impor Excel', run: (load) => imporSiswa(load) },
+    { label: '⬇ Template', run: () => download('template/siswa') },
     { label: '⬇ By Name (EMIS)', run: () => download('export/by-name?' + siswaFilter()) },
     { label: '⬇ Format MBG/SPPG', run: () => download('export/sppg?' + siswaFilter()) },
     { label: '⬇ Data lengkap', run: () => download('export/siswa-lengkap?' + siswaFilter()) },
@@ -263,7 +360,7 @@ pages.siswa = crudPage({
     { name: 'kip_kemenag', label: 'KIP Kemenag' }, { name: 'kip_diknas', label: 'KIP Diknas' }, { name: 'kps', label: 'KPS' }, { name: 'pkh', label: 'PKH' }, { name: 'sktm', label: 'SKTM' }],
 });
 pages.guru = crudPage({
-  key: 'guru', title: 'Data Guru', single: 'Guru',
+  key: 'guru', title: 'Data Guru', single: 'Guru', extra: tombolImpor('guru', 'Data Guru'),
   columns: [{ key: 'nip', label: 'NIP' }, { key: 'nama', label: 'Nama' }, { key: 'jk', label: 'L/P' },
     { key: 'mapel', label: 'Mata pelajaran' }, { key: 'telepon', label: 'Telepon' }],
   fields: [{ name: 'nip', label: 'NIP' }, { name: 'nama', label: 'Nama', required: true },
@@ -279,6 +376,7 @@ pages.kelas = crudPage({
 });
 pages.nilai = crudPage({
   key: 'nilai', title: 'Nilai Siswa', single: 'Nilai',
+  extra: [{ label: '✎ Input nilai per kelas', run: (load) => inputNilaiKelas(load) }, ...tombolImpor('nilai', 'Nilai Siswa')],
   filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas },
     { key: 'semester', label: 'Semua semester', load: async () => ['Ganjil', 'Genap'].map((v) => ({ value: v, label: v })) }],
   columns: [{ key: 'tanggal', label: 'Tanggal' }, { key: 'siswa_nama', label: 'Siswa' }, { key: 'kelas_nama', label: 'Kelas' },
@@ -291,7 +389,7 @@ pages.nilai = crudPage({
     { name: 'tanggal', label: 'Tanggal', type: 'date', default: today() }],
 });
 pages.pembayaran = crudPage({
-  key: 'pembayaran', title: 'Pembayaran (SPP & lainnya)', single: 'Pembayaran',
+  key: 'pembayaran', title: 'Pembayaran (SPP & lainnya)', single: 'Pembayaran', extra: tombolImpor('pembayaran', 'Pembayaran'),
   filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }],
   columns: [{ key: 'tanggal', label: 'Tanggal' }, { key: 'siswa_nama', label: 'Siswa' }, { key: 'kelas_nama', label: 'Kelas' },
     { key: 'jenis', label: 'Jenis' }, { key: 'bulan', label: 'Periode' }, { label: 'Jumlah', render: (r) => rp(r.jumlah) }],
@@ -534,6 +632,7 @@ pages.jadwal = crudPage({
   columns: [{ key: 'kelas_nama', label: 'Kelas', render: (r) => esc(r.kelas_nama || 'Semua kelas') }, { label: 'Hari', render: (r) => HARI[r.hari] },
     { label: 'Waktu', render: (r) => `${r.mulai.replace(':', '.')} - ${r.selesai.replace(':', '.')}` }, { key: 'judul', label: 'Mata pelajaran / kegiatan' }, { key: 'guru', label: 'Guru' }],
   extra: [
+    ...tombolImpor('jadwal', 'Jadwal Pelajaran', { opsi: [{ k: 'buat_kelas', label: 'Buat kelas yang belum ada', on: false }, { k: 'ganti', label: 'Ganti jadwal lama pada kelas yang diimpor', on: false }] }),
     { label: 'Lihat tabel', run: guard(async () => {
       const k = kelasFilter(); if (!k) return toast('Pilih kelas dulu', true);
       const d = await api('jadwal-kelas?' + qs({ kelas_id: k }));
@@ -573,8 +672,9 @@ const JENIS_UJIAN = { harian: 'Ulangan Harian', uts: 'UTS', semester: 'Ujian Sem
 const fmtWaktu = (w) => String(w || '').replace('T', ' ');
 pages.materi = crudPage({
   key: 'materi', title: 'Materi Belajar', single: 'Materi', noExport: true,
-  note: '<p class="empty" style="text-align:left">Materi tampil di aplikasi <b>Belajar</b> milik siswa (alamat <code>/siswa</code>). Kosongkan kelas agar materi tampil untuk semua kelas di lembaga.</p>',
+  note: '<p class="empty" style="text-align:left">Materi tampil di aplikasi <b>Belajar</b> milik siswa (alamat <code>/siswa</code>). Kosongkan kelas agar materi tampil untuk semua kelas di lembaga. Tekan <b>📎 Berkas</b> pada baris materi untuk mengunggah PDF, Word, PowerPoint, gambar, audio, atau video pelajaran.</p>',
   filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }],
+  rowActions: [{ name: 'berkas', label: '📎 Berkas', run: (r) => berkasMateri(r) }],
   columns: [{ key: 'judul', label: 'Judul' }, { key: 'mapel', label: 'Mapel' }, { label: 'Kelas', render: (r) => esc(r.kelas_nama || 'Semua kelas') }, { key: 'dibuat_oleh', label: 'Oleh' }],
   fields: [{ name: 'judul', label: 'Judul materi', required: true, full: true }, { name: 'kelas_id', label: 'Kelas (kosong = semua)', load: optKelas }, { name: 'mapel', label: 'Mata pelajaran' },
     { name: 'isi', label: 'Isi materi (teks)', type: 'textarea', rows: 8, full: true }, { name: 'tautan', label: 'Tautan (video/dokumen, diawali https://)', full: true }],
@@ -630,7 +730,7 @@ function parseSoal(teks) {
 }
 const editorSoal = guard(async (u, reload) => {
   const d = await api('ujian-soal?ujian_id=' + u.id);
-  let list = d.soal.map((s) => ({ tipe: s.tipe, teks: s.teks, opsi: s.opsi || ['', ''], kunci: s.kunci ?? 0, bobot: s.bobot }));
+  let list = d.soal.map((s) => ({ tipe: s.tipe, teks: s.teks, opsi: s.opsi || ['', ''], kunci: s.kunci ?? 0, bobot: s.bobot, gambar_id: s.gambar_id || null }));
   const dlg = $('#dlg'), f = $('#dlgForm');
   const baca = () => { f.querySelectorAll('[data-s]').forEach((el) => {
     const i = Number(el.dataset.s), s = list[i]; if (!s) return;
@@ -644,15 +744,50 @@ const editorSoal = guard(async (u, reload) => {
       <div style="display:grid;gap:10px;max-height:56vh;overflow:auto">${list.map((s, i) => `<div class="card" data-s="${i}"><div class="bar"><b>${i + 1}.</b><span class="badge">${s.tipe === 'pg' ? 'Pilihan ganda' : 'Uraian'}</span><span class="grow"></span>
         <label style="display:flex;gap:4px;align-items:center">Bobot <input name="bobot" type="number" step="0.5" min="0.5" value="${esc(s.bobot)}" style="width:70px"></label><button type="button" class="btn small danger" data-del="${i}" ${d.terkunci ? 'disabled' : ''}>Hapus</button></div>
         <textarea name="teks" rows="2" placeholder="Tulis soal…" ${d.terkunci ? 'disabled' : ''}>${esc(s.teks)}</textarea>
+        <div class="bar small">${s.gambar_id ? `<img src="/api/berkas/${s.gambar_id}" alt="" style="max-height:70px;border-radius:6px">${d.terkunci ? '' : `<button type="button" class="btn small" data-delimg="${i}">Hapus gambar</button>`}` : (d.terkunci ? '' : `<label style="display:inline-flex;gap:6px;align-items:center;color:inherit">🖼 Gambar soal (opsional) <input type="file" data-img="${i}" accept=".jpg,.jpeg,.png,.gif,.webp" style="width:auto"></label>`)}</div>
         ${s.tipe === 'pg' ? `<div style="display:grid;gap:6px;margin-top:6px">${s.opsi.map((o, k) => `<label style="display:flex;gap:6px;align-items:center;color:inherit"><input type="radio" name="kunci${i}" value="${k}" ${s.kunci === k ? 'checked' : ''} style="width:auto" ${d.terkunci ? 'disabled' : ''}>
           <b>${'ABCDEF'[k]}</b><input name="opsi" value="${esc(o)}" placeholder="Pilihan ${'ABCDEF'[k]}" ${d.terkunci ? 'disabled' : ''}></label>`).join('')}
           ${s.opsi.length < 6 && !d.terkunci ? `<button type="button" class="btn small" data-add="${i}">+ pilihan</button>` : ''}<span class="small muted">Pilih bulatan di sebelah pilihan yang benar.</span></div>` : '<p class="small muted">Dinilai manual oleh guru.</p>'}</div>`).join('') || '<div class="empty">Belum ada soal.</div>'}</div>
-      <div class="bar">${d.terkunci ? '' : '<button type="button" class="btn" id="addPg">+ Pilihan ganda</button><button type="button" class="btn" id="addUr">+ Uraian</button><button type="button" class="btn" id="tempel">Tempel banyak soal</button>'}</div>
+      <div class="bar">${d.terkunci ? '' : '<button type="button" class="btn" id="addPg">+ Pilihan ganda</button><button type="button" class="btn" id="addUr">+ Uraian</button><button type="button" class="btn" id="tempel">Tempel banyak soal</button><button type="button" class="btn" id="unggahSoal">⬆ Unggah soal (Excel / CSV / Word)</button><button type="button" class="btn" id="tplSoal">⬇ Template soal</button>'}</div>
       <p class="error" id="formErr"></p><div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button>${d.terkunci ? '' : '<button type="button" class="btn primary" id="simpanSoal">Simpan soal</button>'}</div>`;
     $('#cancelBtn').onclick = () => dlg.close(); f.onsubmit = (e) => e.preventDefault();
     if (d.terkunci) return;
     f.querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => { baca(); list.splice(Number(b.dataset.del), 1); gambar(); }; });
     f.querySelectorAll('[data-add]').forEach((b) => { b.onclick = () => { baca(); list[Number(b.dataset.add)].opsi.push(''); gambar(); }; });
+    f.querySelectorAll('[data-delimg]').forEach((b) => { b.onclick = () => { baca(); list[Number(b.dataset.delimg)].gambar_id = null; gambar(); }; });
+    f.querySelectorAll('[data-img]').forEach((inp) => { inp.onchange = async () => {
+      const i = Number(inp.dataset.img), file = inp.files[0]; if (!file) return;
+      try { baca(); const r = await unggahBerkas({ ujian_id: u.id }, file); list[i].gambar_id = r.id; gambar(); } catch (e) { toast(e.message, true); }
+    }; });
+    $('#tplSoal').onclick = () => download('template/soal');
+    $('#unggahSoal').onclick = () => {
+      baca(); let file = null;
+      const tampil = (r, pesan) => {
+        f.innerHTML = `<h3>Unggah soal · ${esc(u.judul)}</h3>
+          <p class="small muted">Berkas yang didukung: <b>Excel (.xlsx)</b> dan <b>CSV</b> (kolom: Tipe, Soal, A–F, Kunci, Bobot; <a href="#" id="tp2">unduh template</a>), <b>Word (.docx)</b> dan <b>teks (.txt)</b> dengan format: <code>1. Soal?</code> baris berikutnya <code>A. pilihan</code> (beri <b>*</b> di depan pilihan benar atau tulis <code>Kunci: B</code>); tanpa pilihan menjadi soal uraian.</p>
+          <input type="file" id="sf" accept=".xlsx,.csv,.docx,.txt,.md">
+          <label>Soal yang sudah ada <select id="sm"><option value="tambah">Pertahankan, tambahkan soal baru</option><option value="ganti">Ganti semua dengan soal dari berkas</option></select></label>
+          ${r ? `<div class="card"><p><b>${r.terbaca}</b> soal terbaca${r.jumlah_galat ? `, <b style="color:var(--bad)">${r.jumlah_galat} bermasalah</b>` : ''}.</p>
+            ${r.galat.length ? `<div class="tablewrap" style="max-height:24vh;overflow:auto"><table><tbody>${r.galat.map((g) => `<tr><td>${esc(g.pesan)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+            ${r.contoh.map((x) => `<div class="small">• [${x.tipe === 'pg' ? 'PG' : 'Uraian'}] ${esc(x.teks)}${x.opsi ? ' — kunci ' + 'ABCDEF'[x.kunci] : ''}</div>`).join('')}</div>` : ''}
+          <p class="error" id="formErr">${esc(pesan || '')}</p>
+          <div class="actions"><button type="button" class="btn" id="kb">Kembali ke soal</button>${r && !r.jumlah_galat && r.terbaca ? '<button type="button" class="btn primary" id="sg">Simpan soal</button>' : ''}</div>`;
+        $('#tp2').onclick = (e) => { e.preventDefault(); download('template/soal'); };
+        $('#kb').onclick = () => { dlg.close(); editorSoal(u, reload); };
+        $('#sm').value = (r && r.mode) || 'tambah';
+        const jalan = async (simpan) => {
+          if (!file) return;
+          try { $('#formErr').textContent = simpan ? 'Menyimpan…' : 'Membaca…';
+            const r2 = await api('ujian-soal-impor', { method: 'POST', body: { ujian_id: u.id, file: await b64(file), nama_file: file.name, mode: $('#sm').value, simpan } });
+            if (simpan) { toast(`${r2.terbaca} soal disimpan (total ${r2.total_soal})`); dlg.close(); reload(); } else tampil(r2);
+          } catch (e) { $('#formErr').textContent = e.message; }
+        };
+        $('#sf').onchange = (e) => { file = e.target.files[0]; jalan(false); };
+        $('#sm').onchange = () => jalan(false);
+        if ($('#sg')) $('#sg').onclick = () => jalan(true);
+      };
+      tampil(null);
+    };
     $('#addPg').onclick = () => { baca(); list.push({ tipe: 'pg', teks: '', opsi: ['', '', '', ''], kunci: 0, bobot: 1 }); gambar(); };
     $('#addUr').onclick = () => { baca(); list.push({ tipe: 'uraian', teks: '', opsi: [], kunci: null, bobot: 2 }); gambar(); };
     $('#tempel').onclick = () => {

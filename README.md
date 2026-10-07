@@ -52,6 +52,12 @@ Akun admin lembaga dan bendahara hanya dapat dibuat oleh Admin Yayasan. Wali mur
   soal & pilihan, satu kali kesempatan, simpan jawaban otomatis, tutup otomatis saat waktu habis, catatan pindah tab. Kunci jawaban
   tidak pernah dikirim ke siswa dan semua pengecekan waktu dilakukan di server. **Nilai akhir otomatis masuk ke Nilai dan Rapor.**
   Akun siswa dibuat massal per kelas (menu *Akun Siswa*, password sementara + PDF), materi di menu *Materi Belajar*.
+- **Input data, template, dan unggah**: tiap data utama punya tombol **⬇ Template** (Excel berisi judul kolom, petunjuk, dan contoh)
+  dan **Impor Excel/CSV** dengan pratinjau dan pemeriksaan per baris (tidak ada yang tersimpan bila ada baris bermasalah):
+  siswa, guru, nilai, pembayaran, jadwal, dan soal ujian. **Input nilai per kelas** seperti lembar nilai. Soal ujian dapat diunggah dari
+  Excel, CSV, **Word (.docx)**, atau teks, plus **gambar soal**. **Materi pelajaran** dapat dilampiri berkas (PDF, Word, PowerPoint, Excel,
+  gambar, mp3, mp4; maks. 20 MB, atur `UPLOAD_MAX_MB`) yang dibuka siswa di aplikasi Belajar. Berkas disimpan di `data/berkas`
+  (volume Docker `data`), hanya dilayani lewat pemeriksaan hak akses, dan ikut disalin ke cloud bila `BACKUP_RCLONE_REMOTE` diatur.
 - **Cetak massal**: rapor satu kelas dalam satu PDF, **kartu pelajar** (dengan barcode NIS/NISN) per kelas atau per siswa.
 - **Rapor di aplikasi wali** (lihat per semester + unduh PDF); kehadiran rapor dihitung per semester (Ganjil Jul-Des, Genap Jan-Jun).
 - **Pengingat tagihan lewat WhatsApp** ke wali (pratinjau dulu, tidak mengulang dalam 7 hari), serta dashboard dengan tren

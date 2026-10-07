@@ -193,6 +193,15 @@ const MIGRATIONS = [
      jawaban TEXT NOT NULL DEFAULT '{}', skor TEXT NOT NULL DEFAULT '{}', nilai REAL, status TEXT NOT NULL DEFAULT 'berjalan',
      pindah_tab INTEGER NOT NULL DEFAULT 0, nilai_id INTEGER, UNIQUE (ujian_id, siswa_id));
    CREATE INDEX idx_peserta_status ON ujian_peserta(status, batas);`,
+  // v12: berkas unggahan (materi pelajaran dan gambar soal); gambar soal
+  `CREATE TABLE berkas (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id),
+     materi_id INTEGER REFERENCES materi(id) ON DELETE CASCADE, ujian_id INTEGER REFERENCES ujian(id) ON DELETE CASCADE,
+     nama TEXT NOT NULL, ext TEXT NOT NULL, ukuran INTEGER NOT NULL, simpan TEXT NOT NULL UNIQUE, dibuat_oleh TEXT,
+     dibuat TEXT NOT NULL DEFAULT (datetime('now')));
+   CREATE INDEX idx_berkas_materi ON berkas(materi_id);
+   CREATE INDEX idx_berkas_ujian ON berkas(ujian_id);
+   ALTER TABLE soal ADD COLUMN gambar_id INTEGER;`,
 ];
 
 function migrate(db) {

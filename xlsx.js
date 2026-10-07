@@ -61,4 +61,4 @@ function buildXlsx(sheetName, headers, rows) {
   ]);
 }
 
-module.exports = { buildXlsx };
+module.exports = { buildXlsx, zip };

@@ -1,5 +1,5 @@
 // Service worker aplikasi siswa: hanya menyimpan cangkang aplikasi. Soal, jawaban, dan nilai (/api) TIDAK pernah disimpan.
-const CACHE = 'siswa-v1';
+const CACHE = 'siswa-v2';
 const SHELL = ['/siswa', '/siswa.css', '/siswa.js', '/manifest-siswa.webmanifest', '/icons/icon-192.png', '/logo/yayasan.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
