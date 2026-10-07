@@ -155,7 +155,163 @@ function tablePdf({ title, subtitle, headers, rows, footer, logo }) {
 }
 
 // Rapor satu siswa (A4 portrait)
-function raporPdf({ siswa, semester, nilai, absensi }, logo) {
+const HARI_NAMA = ['', 'Senin', 'Selasa', 'Rabu', 'Kamis', "Jum'at", 'Sabtu', 'Ahad'];
+const BULAN_NAMA = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const tglPanjang = (iso) => { const [y, m, d] = String(iso).split('-').map(Number); return y ? `${d} ${BULAN_NAMA[m - 1]} ${y}` : ''; };
+const box = (pdf, x, y, w, h, g = 0.35) => { pdf.line(x, y, x + w, y, g); pdf.line(x, y + h, x + w, y + h, g); pdf.line(x, y, x, y + h, g); pdf.line(x + w, y, x + w, y + h, g); };
+
+// Jadwal pelajaran satu kelas: baris = jam, kolom = hari. Sel yang sama di semua hari digabung (mis. Qiro'atul Yaumiyah).
+function jadwalPdf({ lembaga, kelas, tahun, rows, logo }) {
+  const M = 30, size = 8, lh = 10, pad = 3, pdf = new Pdf(842, 595), W = pdf.w - 2 * M;
+  const hari = [...new Set(rows.map((r) => r.hari))].sort((a, b) => a - b);
+  const slots = [...new Map(rows.map((r) => [r.mulai + '-' + r.selesai, [r.mulai, r.selesai]])).values()].sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1]));
+  const lw = pdf.image(logo, M, 24, 40), tx = M + (lw ? lw + 10 : 0);
+  pdf.text(tx, 36, 'YAYASAN MIFTAHUL ULUMILLAH', 9, { gray: 0.4 });
+  pdf.text(tx, 52, (lembaga || '').toUpperCase(), 14, { bold: true });
+  pdf.text(tx, 66, `JADWAL PELAJARAN KELAS ${kelas}${tahun ? ' - TAHUN PELAJARAN ' + tahun : ''}`, 10, { bold: true });
+  let y = 80;
+  if (!hari.length) { pdf.text(M, y + 30, 'Belum ada jadwal.', 10, { gray: 0.4 }); return pdf.build(); }
+  const wt = 62, cw = (W - wt) / hari.length, bottom = pdf.h - M;
+  const head = () => {
+    pdf.rect(M, y, W, 16, 0.88); box(pdf, M, y, W, 16);
+    pdf.text(M, y + 11, 'Waktu', size + 1, { bold: true, align: 'center', w: wt });
+    hari.forEach((h, i) => pdf.text(M + wt + i * cw, y + 11, HARI_NAMA[h], size + 1, { bold: true, align: 'center', w: cw }));
+    y += 16;
+  };
+  head();
+  for (const [a, b] of slots) {
+    const cells = hari.map((h) => rows.filter((r) => r.hari === h && r.mulai === a && r.selesai === b).map((r) => ({ t: r.judul, g: r.guru || '' })));
+    const key = (c) => JSON.stringify(c);
+    const spans = [];   // sel bersebelahan yang sama (mis. Qiro'atul Yaumiyah Senin-Kamis) digabung
+    for (let d = 0; d < cells.length; d++) {
+      let e = d;
+      while (cells[d].length && e + 1 < cells.length && key(cells[e + 1]) === key(cells[d])) e++;
+      spans.push({ d, e, items: cells[d] }); d = e;
+    }
+    const laid = spans.map((sp) => {
+      const w = (sp.e - sp.d + 1) * cw - 2 * pad, multi = sp.e > sp.d;
+      const lines = [];
+      sp.items.forEach((it) => {
+        wrap(it.t, w, size, multi, 3).forEach((l) => lines.push([l, multi ? 'b' : '']));
+        if (it.g) wrap(it.g, w, 7, false, 2).forEach((l) => lines.push([l, 'g']));
+      });
+      return { ...sp, lines, multi };
+    });
+    const h = Math.max(1, ...laid.map((sp) => sp.lines.reduce((a, [, k]) => a + (k === 'g' ? 9 : lh), 0))) + 2 * pad;
+    if (y + h > bottom) { pdf.addPage(); y = M; head(); }
+    pdf.text(M, y + pad + 7, `${a.replace(':', '.')}-${b.replace(':', '.')}`, size, { align: 'center', w: wt });
+    pdf.line(M, y, M, y + h, 0.35); pdf.line(M + wt, y, M + wt, y + h, 0.35); pdf.line(M + W, y, M + W, y + h, 0.35);
+    for (const sp of laid) {
+      const x = M + wt + sp.d * cw, wcell = (sp.e - sp.d + 1) * cw;
+      if (sp.d) pdf.line(x, y, x, y + h, 0.35);
+      if (sp.multi) pdf.rect(x + 0.4, y + 0.4, wcell - 0.8, h - 0.8, 0.93);
+      let ly = y + pad + 7;
+      for (const [l, k] of sp.lines) {
+        if (k === 'g') { pdf.text(x + pad, ly, l, 7, { gray: 0.4, ...(sp.multi ? { align: 'center', w: wcell - 2 * pad } : {}) }); ly += 9; }
+        else { pdf.text(x + pad, ly, l, size, { bold: k === 'b', ...(sp.multi ? { align: 'center', w: wcell - 2 * pad } : {}) }); ly += lh; }
+      }
+    }
+    y += h; pdf.line(M, y, M + W, y, 0.35);
+  }
+  return pdf.build();
+}
+
+// Rapor format Madin (ASAT): mengikuti contoh rapor madin yayasan
+function raporMadinPdf({ siswa, semester, madin }, logo) {
+  const M = 40, pdf = new Pdf(595, 842), W = pdf.w - 2 * M, size = 9;
+  const lw = pdf.image(logo, M, 24, 56);
+  pdf.text(M, 38, 'YAYASAN MIFTAHUL ULUMILLAH', 10, { bold: true, align: 'center', w: W });
+  pdf.text(M, 53, (siswa.lembaga_nama || '').toUpperCase(), 13, { bold: true, align: 'center', w: W });
+  pdf.text(M, 66, 'TAMBAKREJO BOJONEGORO', 9, { align: 'center', w: W });
+  if (siswa.lembaga_alamat) pdf.text(M, 78, siswa.lembaga_alamat, 7.5, { gray: 0.4, align: 'center', w: W });
+  pdf.line(M, 86, M + W, 86, 0, 1.2);
+  pdf.text(M, 106, 'ASESMEN SUMATIF AKHIR TAHUN (ASAT)', 12, { bold: true, align: 'center', w: W });
+  const info = (x, y, k, v) => { pdf.text(x, y, k, size); pdf.text(x + 48, y, ': ' + (v || '-'), size, { bold: true }); };
+  info(M, 128, 'Nama', siswa.nama); info(M, 142, 'Kelas', siswa.kelas_nama);
+  info(M + W - 190, 128, 'Semester', semester || '-'); info(M + W - 190, 142, 'Tahun', madin.tahun_ajaran);
+  // tabel nilai
+  const cx = [M, M + 22, M + 142, M + 174, M + 212, M + 297, M + 345]; // No | Bidang studi | KKM | Angka | Huruf | Rata kelas | Catatan
+  const cw = [22, 120, 32, 38, 85, 48, M + W - (M + 345)];
+  let y = 156; const rh = 16;
+  const rowBox = (h, fill, inner = [1, 2, 3, 4, 5, 6]) => { if (fill) pdf.rect(M, y, W, h, fill); box(pdf, M, y, W, h); inner.forEach((i) => pdf.line(cx[i], y, cx[i], y + h, 0.35)); };
+  pdf.rect(M, y, W, 30, 0.88); box(pdf, M, y, W, 30);
+  pdf.line(cx[3], y + 15, cx[5], y + 15, 0.35);
+  [1, 2, 3, 5, 6].forEach((i) => pdf.line(cx[i], y, cx[i], y + 30, 0.35)); pdf.line(cx[4], y + 15, cx[4], y + 30, 0.35);
+  pdf.text(cx[0], y + 18, 'No.', 8, { bold: true, align: 'center', w: cw[0] });
+  pdf.text(cx[1], y + 18, 'Bidang Studi', 8, { bold: true, align: 'center', w: cw[1] });
+  pdf.text(cx[2], y + 18, 'KKM', 8, { bold: true, align: 'center', w: cw[2] });
+  pdf.text(cx[3], y + 10, 'Nilai', 8, { bold: true, align: 'center', w: cw[3] + cw[4] });
+  pdf.text(cx[3], y + 25, 'Angka', 8, { bold: true, align: 'center', w: cw[3] });
+  pdf.text(cx[4], y + 25, 'Huruf', 8, { bold: true, align: 'center', w: cw[4] });
+  pdf.text(cx[5], y + 12, 'Rata-rata', 7.5, { bold: true, align: 'center', w: cw[5] });
+  pdf.text(cx[5], y + 23, 'Kelas', 7.5, { bold: true, align: 'center', w: cw[5] });
+  pdf.text(cx[6], y + 18, 'Catatan Guru', 8, { bold: true, align: 'center', w: cw[6] });
+  y += 30;
+  const group = (t) => { rowBox(rh, 0.94, []); pdf.text(M + 4, y + 11, t, size, { bold: true }); y += rh; };
+  let no = 0;
+  const item = (m) => {
+    no++;
+    const cat = wrap(m.catatan, cw[6] - 6, 7.5, false, 2), nm = wrap(m.mapel, cw[1] - 6, size, false, 2), hr = wrap(m.huruf, cw[4] - 6, 8, false, 2);
+    const h = Math.max(rh, Math.max(cat.length, nm.length, hr.length) * 10 + 6);
+    rowBox(h);
+    pdf.text(cx[0], y + 11, String(no), size, { align: 'center', w: cw[0] });
+    nm.forEach((l, k) => pdf.text(cx[1] + 3, y + 11 + k * 10, l, size));
+    if (m.kkm != null) pdf.text(cx[2], y + 11, String(m.kkm), size, { align: 'center', w: cw[2] });
+    if (m.rata !== null) {
+      pdf.text(cx[3], y + 11, String(m.rata), size, { bold: true, align: 'center', w: cw[3] });
+      hr.forEach((l, k) => pdf.text(cx[4], y + 11 + k * 10, l, 8, { align: 'center', w: cw[4] }));
+    }
+    if (m.kelas_rata !== null) pdf.text(cx[5], y + 11, String(m.kelas_rata), size, { align: 'center', w: cw[5] });
+    cat.forEach((l, k) => pdf.text(cx[6] + 3, y + 10 + k * 10, l, 7.5));
+    y += h;
+  };
+  group('A. MATA PELAJARAN POKOK'); madin.pokok.forEach(item);
+  if (!madin.pokok.length) { rowBox(rh, 0, []); pdf.text(M + 28, y + 11, 'Belum ada mata pelajaran / nilai.', size, { gray: 0.4 }); y += rh; }
+  if (madin.kecakapan.length) { group('B. KECAKAPAN'); madin.kecakapan.forEach(item); }
+  for (const [t, v] of [['Jumlah Nilai', madin.jumlah], ['Nilai Rata-Rata', madin.rata]]) {
+    rowBox(rh, 0.94, [3, 4]); pdf.text(M + 4, y + 11, t, size, { bold: true });
+    pdf.text(cx[3], y + 11, v === null ? '-' : String(Math.round(v * 10) / 10), size, { bold: true, align: 'center', w: cw[3] }); y += rh;
+  }
+  // kepribadian + ketidakhadiran
+  y += 14;
+  const sw = 345, kx = M + sw + 10, kw = W - sw - 10;
+  pdf.rect(M, y, sw, 16, 0.88); box(pdf, M, y, sw, 16); pdf.line(M + 22, y, M + 22, y + 16, 0.35); pdf.line(M + sw - 45, y, M + sw - 45, y + 16, 0.35);
+  pdf.text(M, y + 11, 'No.', 8, { bold: true, align: 'center', w: 22 });
+  pdf.text(M + 26, y + 11, 'Kepribadian dan Pergaulan', 8, { bold: true });
+  pdf.text(M + sw - 45, y + 11, 'Nilai', 8, { bold: true, align: 'center', w: 45 });
+  pdf.rect(kx, y, kw, 16, 0.88); box(pdf, kx, y, kw, 16);
+  pdf.text(kx, y + 11, 'Ketidakhadiran', 8, { bold: true, align: 'center', w: kw });
+  const top = y; y += 16;
+  madin.sikap.forEach((s, i) => {
+    const l = wrap(s.teks, sw - 22 - 45 - 6, 8, false, 2), h = Math.max(rh, l.length * 10 + 6);
+    box(pdf, M, y, sw, h); pdf.line(M + 22, y, M + 22, y + h, 0.35); pdf.line(M + sw - 45, y, M + sw - 45, y + h, 0.35);
+    pdf.text(M, y + 11, String(i + 1), size, { align: 'center', w: 22 });
+    l.forEach((t, k) => pdf.text(M + 25, y + 11 + k * 10, t, 8));
+    pdf.text(M + sw - 45, y + 11, s.nilai, size, { bold: true, align: 'center', w: 45 });
+    y += h;
+  });
+  let ky = top + 16;
+  for (const [k, v] of [['Sakit', madin.ketidakhadiran.sakit], ['Izin', madin.ketidakhadiran.izin], ['Tanpa keterangan', madin.ketidakhadiran.alpa]]) {
+    box(pdf, kx, ky, kw, rh); pdf.text(kx + 4, ky + 11, k, 8); pdf.text(kx, ky + 11, `${v} hari`, 8, { bold: true, align: 'right', w: kw - 4 }); ky += rh;
+  }
+  // tanda tangan
+  y += 28;
+  pdf.text(M + W - 190, y, `Tambakrejo, ${tglPanjang(madin.tanggal)}`, size, { align: 'center', w: 190 });
+  y += 13;
+  pdf.text(M, y, 'Wali Kelas,', size, { align: 'center', w: 190 });
+  pdf.text(M + W - 190, y, 'Kepala ' + (siswa.lembaga_nama || 'Madrasah Diniyah'), size, { align: 'center', w: 190 });
+  y += 62;
+  pdf.text(M, y, siswa.wali_kelas || '(................................)', size, { bold: true, align: 'center', w: 190 });
+  pdf.text(M + W - 190, y, siswa.kepala_lembaga || '(................................)', size, { bold: true, align: 'center', w: 190 });
+  return pdf.build();
+}
+
+function raporPdf(r, logo) {
+  if (r.format === 'madin') return raporMadinPdf(r, logo);
+  return raporUmumPdf(r, logo);
+}
+
+function raporUmumPdf({ siswa, semester, nilai, absensi }, logo) {
   const M = 50, pdf = new Pdf(595, 842), W = pdf.w - 2 * M;
   pdf.image(logo, M, 26, 62);
   pdf.text(M, 40, 'YAYASAN MIFTAHUL ULUMILLAH', 9, { gray: 0.4, align: 'center', w: W });
@@ -213,4 +369,4 @@ function kuitansiPdf(p, rp, logo) {
   return pdf.build();
 }
 
-module.exports = { tablePdf, raporPdf, kuitansiPdf, wrap, width, fmtDate };
+module.exports = { tablePdf, raporPdf, kuitansiPdf, jadwalPdf, wrap, width, fmtDate };

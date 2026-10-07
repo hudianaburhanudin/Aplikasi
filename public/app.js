@@ -48,7 +48,7 @@ function openForm(title, fields, values, onSave) {
       `<label><input type="checkbox" name="${x.name}" value="${esc(o.value)}" ${(values[x.name] || []).includes(o.value) ? 'checked' : ''}> ${esc(o.label)}</label>`).join('')}</fieldset>`;
     if (x.options) input = `<select name="${x.name}">${x.blank === false ? '' : '<option value=""></option>'}${x.options.map((o) =>
       `<option value="${esc(o.value)}" ${String(o.value) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
-    else if (x.type === 'textarea') input = `<textarea name="${x.name}" rows="2">${esc(v)}</textarea>`;
+    else if (x.type === 'textarea') input = `<textarea name="${x.name}" rows="${x.rows || 2}">${esc(v)}</textarea>`;
     else input = `<input name="${x.name}" type="${x.type || 'text'}" value="${esc(v)}" ${x.step ? `step="${x.step}"` : ''} ${x.disabled ? 'disabled' : ''}>`;
     return `<label class="${x.full ? 'full' : ''}">${esc(x.label)}${x.required ? ' *' : ''}${input}</label>`;
   }).join('')}</div><p class="error" id="formErr"></p>
@@ -248,7 +248,8 @@ pages.lembaga = crudPage({
   columns: [{ key: 'kode', label: 'Kode' }, { key: 'nama', label: 'Nama' }, { key: 'jenjang', label: 'Jenjang' }, { key: 'telepon', label: 'Telepon' },
     { label: 'Pendaftaran online', render: (r) => r.ppdb_buka ? '<span class="badge">dibuka</span>' : 'ditutup' }],
   fields: [{ name: 'kode', label: 'Kode singkat', required: true }, { name: 'nama', label: 'Nama lembaga', required: true },
-    { name: 'jenjang', label: 'Jenjang' }, { name: 'telepon', label: 'Telepon' },
+    { name: 'jenjang', label: 'Jenjang (isi Madin agar rapor memakai format Madin)' }, { name: 'telepon', label: 'Telepon' },
+    { name: 'kepala', label: 'Nama kepala sekolah/madrasah (untuk tanda tangan rapor)', full: true },
     { name: 'ppdb_buka', label: 'Pendaftaran online (PPDB)', blank: false, default: 0, full: true, options: [{ value: 0, label: 'Ditutup' }, { value: 1, label: 'Dibuka' }] }, { name: 'alamat', label: 'Alamat', type: 'textarea', full: true }],
 });
 pages.tahun = crudPage({
@@ -414,23 +415,123 @@ pages.absensi = guard(async () => {
   load();
 });
 
+// ---- jadwal pelajaran ----
+const HARI = ['', 'Senin', 'Selasa', 'Rabu', 'Kamis', "Jum'at", 'Sabtu', 'Ahad'];
+const slotKey = (r) => r.mulai + '-' + r.selesai;
+function jadwalGrid(rows) {
+  if (!rows.length) return '<div class="empty">Belum ada jadwal.</div>';
+  const hari = [...new Set(rows.map((r) => r.hari))].sort((a, b) => a - b);
+  const slots = [...new Set(rows.map(slotKey))].sort();
+  const body = slots.map((sl) => {
+    const cells = hari.map((h) => rows.filter((r) => r.hari === h && slotKey(r) === sl).map((r) => esc(r.judul) + (r.guru ? `<div class="s">${esc(r.guru)}</div>` : '')).join('<hr>'));
+    let tds = '';
+    for (let d = 0; d < cells.length; d++) {   // sel bersebelahan yang sama digabung
+      let e = d;
+      while (cells[d] && e + 1 < cells.length && cells[e + 1] === cells[d]) e++;
+      tds += e > d ? `<td colspan="${e - d + 1}" style="text-align:center;background:#f1f5f4"><b>${cells[d]}</b></td>` : `<td>${cells[d]}</td>`;
+      d = e;
+    }
+    return `<tr><td class="nw"><b>${sl.replace(/:/g, '.').replace('-', ' - ')}</b></td>${tds}</tr>`;
+  }).join('');
+  return `<div class="tablewrap"><table><thead><tr><th>Waktu</th>${hari.map((h) => `<th>${HARI[h]}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+const kelasFilter = () => { const el = document.querySelector('#main [data-f=kelas_id]'); return el ? el.value : ''; };
+pages.jadwal = crudPage({
+  key: 'jadwal', title: 'Jadwal Pelajaran', single: 'Jadwal', noExport: true,
+  filters: [{ key: 'kelas_id', label: 'Semua kelas', load: optKelas }],
+  note: `<p class="empty" style="text-align:left">Pilih kelas lalu <b>Lihat tabel</b> / <b>PDF</b>. Baris tanpa kelas berlaku untuk <b>semua kelas</b> di lembaga (mis. Qiro'atul Yaumiyah). Wali murid melihat jadwal kelas anaknya di aplikasi.<br>
+    <b>Impor massal</b>: satu baris per jam pelajaran dengan format <code>kelas;hari;mulai;selesai;judul;guru</code>, contoh <code>7A;Senin;07.40;08.20;Matematika;Bu Sari</code>. Kelas <code>*</code> = semua kelas.</p>`,
+  columns: [{ key: 'kelas_nama', label: 'Kelas', render: (r) => esc(r.kelas_nama || 'Semua kelas') }, { label: 'Hari', render: (r) => HARI[r.hari] },
+    { label: 'Waktu', render: (r) => `${r.mulai.replace(':', '.')} - ${r.selesai.replace(':', '.')}` }, { key: 'judul', label: 'Mata pelajaran / kegiatan' }, { key: 'guru', label: 'Guru' }],
+  extra: [
+    { label: 'Lihat tabel', run: guard(async () => {
+      const k = kelasFilter(); if (!k) return toast('Pilih kelas dulu', true);
+      const d = await api('jadwal-kelas?' + qs({ kelas_id: k }));
+      showInfo(`Jadwal kelas ${d.kelas.nama} · ${d.kelas.lembaga_nama}`, jadwalGrid(d.rows));
+    }) },
+    { label: '⬇ PDF', run: () => { const k = kelasFilter(); if (!k) return toast('Pilih kelas dulu', true); download('pdf/jadwal?' + qs({ kelas_id: k })); } },
+    { label: 'Impor massal', run: (load) => {
+      openForm('Impor Jadwal', [
+        { name: 'text', label: 'Tempel data (kelas;hari;mulai;selesai;judul;guru) atau pilih file CSV di atas', type: 'textarea', rows: 10, full: true, required: true },
+        { name: 'ganti', label: 'Jadwal lama pada kelas yang diimpor', blank: false, default: 0, options: [{ value: 0, label: 'Tambahkan saja' }, { value: 1, label: 'Ganti (hapus jadwal lama kelas tersebut)' }] },
+        { name: 'buat_kelas', label: 'Kelas yang belum ada', blank: false, default: 0, options: [{ value: 0, label: 'Tolak (tampilkan daftar)' }, { value: 1, label: 'Buat otomatis' }] },
+      ], {}, async (d) => {
+        const r = await api('jadwal-impor', { method: 'POST', body: { text: d.text, ganti: d.ganti === '1', buat_kelas: d.buat_kelas === '1' } });
+        toast(`${r.baris} baris diimpor${r.kelas_baru.length ? ', kelas baru: ' + r.kelas_baru.join(', ') : ''}`); load();
+      });
+      const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.csv,.txt,text/csv,text/plain'; inp.style.margin = '6px 0';
+      inp.onchange = () => { const f = inp.files[0]; if (f) f.text().then((t) => { $('#dlgForm textarea[name=text]').value = t; }); };
+      $('#dlgForm h3').after(inp);
+    } }],
+  fields: [{ name: 'kelas_id', label: 'Kelas (kosong = semua kelas)', load: optKelas, full: true },
+    { name: 'hari', label: 'Hari', blank: false, default: 1, options: [1, 2, 3, 4, 5, 6, 7].map((n) => ({ value: n, label: HARI[n] })) },
+    { name: 'judul', label: 'Mata pelajaran / kegiatan', required: true },
+    { name: 'mulai', label: 'Mulai (JJ.MM)', required: true }, { name: 'selesai', label: 'Selesai (JJ.MM)', required: true },
+    { name: 'guru', label: 'Guru', full: true }],
+});
+pages.mapelrapor = crudPage({
+  key: 'mapel_rapor', title: 'Mata Pelajaran Rapor', single: 'Mapel Rapor', noExport: true,
+  note: '<p class="empty" style="text-align:left">Dipakai pada rapor <b>format Madin</b> (lembaga berjenjang <b>Madin</b>): urutan mapel, kelompok (A. Pokok / B. Kecakapan) dan <b>KKM</b>. Mapel yang bernilai tetapi belum didaftarkan tetap tampil di kelompok Pokok tanpa KKM.</p>',
+  columns: [{ key: 'urut', label: 'Urut' }, { key: 'nama', label: 'Mata pelajaran' }, { label: 'Kelompok', render: (r) => (r.kategori === 'kecakapan' ? 'B. Kecakapan' : 'A. Pokok') }, { key: 'kkm', label: 'KKM' }],
+  fields: [{ name: 'nama', label: 'Nama mata pelajaran', required: true, full: true },
+    { name: 'kategori', label: 'Kelompok', blank: false, default: 'pokok', options: [{ value: 'pokok', label: 'A. Mata pelajaran pokok' }, { value: 'kecakapan', label: 'B. Kecakapan' }] },
+    { name: 'kkm', label: 'KKM', type: 'number', step: '0.01' }, { name: 'urut', label: 'Urutan', type: 'number', default: 0 }],
+});
+
 // ---- rapor ----
 pages.rapor = guard(async () => {
   const siswa = await optSiswa();
   $('#main').innerHTML = `<h2>Rapor Siswa</h2><div class="bar">
     <select id="s">${siswa.map((s) => `<option value="${s.value}">${esc(s.label)}</option>`).join('')}</select>
     <select id="sem"><option value="">Semua semester</option><option>Ganjil</option><option>Genap</option></select>
+    <button class="btn" id="raporEdit" style="display:none">✎ Isi sikap & catatan</button>
     <button class="btn" id="raporPdf">⬇ PDF</button><button class="btn" id="printBtn">🖨 Cetak</button></div><div id="out"></div>`;
+  let last = null;
   const load = guard(async () => {
+    $('#raporEdit').style.display = 'none';
     if (!$('#s').value) { $('#out').innerHTML = '<div class="empty">Belum ada siswa.</div>'; return; }
-    const d = await api('rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
+    const d = last = await api('rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
     const s = d.siswa, a = d.absensi, avg = d.nilai.length ? (d.nilai.reduce((x, n) => x + n.rata, 0) / d.nilai.length).toFixed(1) : '-';
+    if (d.format === 'madin') {
+      const m = d.madin, row = (x, i) => `<tr><td>${i}</td><td>${esc(x.mapel)}</td><td>${x.kkm ?? ''}</td><td><b>${x.rata ?? ''}</b></td><td>${esc(x.huruf)}</td><td>${x.kelas_rata ?? ''}</td><td>${esc(x.catatan)}</td></tr>`;
+      let n = 0;
+      $('#raporEdit').style.display = '';
+      $('#out').innerHTML = `<div class="rapor"><img class="rapor-logo" src="${logoUrl(s.lembaga_kode)}" alt=""><div style="text-align:center;font-weight:700">YAYASAN MIFTAHUL ULUMILLAH</div><div style="text-align:center;font-weight:700">${esc((s.lembaga_nama || '').toUpperCase())}</div>
+        <h3 style="margin-top:10px">ASESMEN SUMATIF AKHIR TAHUN (ASAT)</h3>
+        <dl><dt>Nama</dt><dd>${esc(s.nama)}</dd><dt>Kelas</dt><dd>${esc(s.kelas_nama)}</dd><dt>Semester</dt><dd>${esc(d.semester || '-')}</dd><dt>Tahun</dt><dd>${esc(m.tahun_ajaran)}</dd></dl>
+        <div class="tablewrap"><table><thead><tr><th>No.</th><th>Bidang Studi</th><th>KKM</th><th>Angka</th><th>Huruf</th><th>Rata-rata kelas</th><th>Catatan guru</th></tr></thead><tbody>
+          <tr><th colspan="7">A. MATA PELAJARAN POKOK</th></tr>${m.pokok.map((x) => row(x, ++n)).join('') || '<tr><td colspan="7" class="empty">Belum ada mapel/nilai. Atur di menu Mapel Rapor.</td></tr>'}
+          ${m.kecakapan.length ? `<tr><th colspan="7">B. KECAKAPAN</th></tr>${m.kecakapan.map((x) => row(x, ++n)).join('')}` : ''}
+          <tr><th colspan="3">Jumlah Nilai</th><th>${Math.round(m.jumlah * 10) / 10}</th><td colspan="3"></td></tr>
+          <tr><th colspan="3">Nilai Rata-Rata</th><th>${m.rata ?? '-'}</th><td colspan="3"></td></tr></tbody></table></div>
+        <div class="grid2" style="margin-top:12px"><div class="tablewrap"><table><thead><tr><th>No.</th><th>Kepribadian dan Pergaulan</th><th>Nilai</th></tr></thead><tbody>${m.sikap.map((x, i) => `<tr><td>${i + 1}</td><td>${esc(x.teks)}</td><td><b>${esc(x.nilai)}</b></td></tr>`).join('')}</tbody></table></div>
+        <div class="tablewrap"><table><thead><tr><th colspan="2">Ketidakhadiran</th></tr></thead><tbody><tr><td>Sakit</td><td>${esc(m.ketidakhadiran.sakit)} hari</td></tr><tr><td>Izin</td><td>${esc(m.ketidakhadiran.izin)} hari</td></tr><tr><td>Tanpa keterangan</td><td>${esc(m.ketidakhadiran.alpa)} hari</td></tr></tbody></table></div></div>
+        <p style="margin-top:14px">Wali kelas: <b>${esc(s.wali_kelas || '-')}</b> · Kepala: <b>${esc(s.kepala_lembaga || '(isi di menu Lembaga)')}</b></p></div>`;
+      return;
+    }
     $('#out').innerHTML = `<div class="rapor"><img class="rapor-logo" src="${logoUrl(s.lembaga_kode)}" alt=""><h3>LAPORAN HASIL BELAJAR</h3><div style="text-align:center;font-weight:600">${esc(s.lembaga_nama || '')}</div><div style="text-align:center;color:var(--mut)">${d.semester ? 'Semester ' + esc(d.semester) : 'Semua semester'}</div>
       <dl><dt>Nama</dt><dd>${esc(s.nama)}</dd><dt>NIS</dt><dd>${esc(s.nis)}</dd><dt>Kelas</dt><dd>${esc(s.kelas_nama)}</dd><dt>Wali kelas</dt><dd>${esc(s.wali_kelas)}</dd></dl>
       <table><thead><tr><th>Mata pelajaran</th><th>Jml nilai</th><th>Rata-rata</th></tr></thead><tbody>${d.nilai.map((n) =>
         `<tr><td>${esc(n.mapel)}</td><td>${n.jumlah}</td><td>${n.rata}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Belum ada nilai.</td></tr>'}
       <tr><th colspan="2">Rata-rata keseluruhan</th><th>${avg}</th></tr></tbody></table>
       <p>Kehadiran: Hadir ${a.h || 0} · Sakit ${a.s || 0} · Izin ${a.i || 0} · Alpa ${a.a || 0}</p></div>`;
+  });
+  $('#raporEdit').onclick = guard(async () => {
+    const sem = $('#sem').value; if (!sem) return toast('Pilih semester terlebih dahulu', true);
+    const cat = await api('rapor-catatan?' + qs({ siswa_id: $('#s').value, semester: sem }));
+    const mapel = [...last.madin.pokok, ...last.madin.kecakapan];
+    const nilaiOpt = ['A', 'B', 'C', 'D'].map((v) => ({ value: v, label: v }));
+    openForm(`Sikap & catatan · ${last.siswa.nama} · ${sem}`, [
+      ...last.madin.sikap.map((x, i) => ({ name: 'sikap' + (i + 1), label: `${i + 1}. ${x.teks}`, options: nilaiOpt, full: true })),
+      { name: 'sakit', label: 'Sakit (hari, kosong = dari absensi)', type: 'number' }, { name: 'izin', label: 'Izin (hari)', type: 'number' }, { name: 'alpa', label: 'Tanpa keterangan (hari)', type: 'number' },
+      ...mapel.map((m, i) => ({ name: 'c' + i, label: 'Catatan guru: ' + m.mapel, full: true })),
+    ], { ...cat, ...Object.fromEntries(mapel.map((m, i) => ['c' + i, cat['cat:' + m.mapel] || ''])) }, async (d) => {
+      const data = {};
+      for (const k of ['sikap1', 'sikap2', 'sikap3', 'sikap4', 'sikap5', 'sakit', 'izin', 'alpa']) data[k] = d[k] || null;
+      mapel.forEach((m, i) => { data['cat:' + m.mapel] = d['c' + i] || null; });
+      await api('rapor-catatan', { method: 'PUT', body: { siswa_id: Number($('#s').value), semester: sem, data } });
+      toast('Tersimpan'); load();
+    });
   });
   $('#printBtn').onclick = () => window.print();
   $('#raporPdf').onclick = () => $('#s').value && download('pdf/rapor?' + qs({ siswa_id: $('#s').value, semester: $('#sem').value }));
@@ -566,7 +667,7 @@ pages.audit = guard(async () => {
 // ---- shell ----
 const ALL = ['yayasan', 'admin', 'staf'], ADM = ['yayasan', 'admin'], GURU = ['yayasan', 'admin', 'staf', 'guru'];
 const MENU = [['dashboard', 'Dashboard', ALL], ['siswa', 'Siswa', ALL], ['guru', 'Guru', ALL], ['kelas', 'Kelas', ALL], ['absensi', 'Absensi', GURU], ['pelanggaran', 'Pelanggaran', GURU],
-  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
+  ['pendaftar', 'Pendaftar (PPDB)', ALL], ['kenaikan', 'Kenaikan Kelas', ADM], ['nilai', 'Nilai', ALL], ['rapor', 'Rapor', ALL], ['mapelrapor', 'Mapel Rapor', ADM], ['jadwal', 'Jadwal', ALL], ['pembayaran', 'Pembayaran', ALL], ['tagihan', 'Tagihan', ALL], ['pengumuman', 'Pengumuman', ALL], ['jenis', 'Jenis Pelanggaran', ADM], ['whatsapp', 'WhatsApp', ADM], ['permintaan', 'Permintaan Data', ADM], ['pengguna', 'Pengguna', ADM],
   ['lembaga', 'Lembaga', ['yayasan']], ['tahun', 'Tahun Ajaran', ['yayasan']], ['profil', 'Profil Yayasan', ['yayasan']], ['audit', 'Jejak Audit', ['yayasan']]];
 
 function route() {

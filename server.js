@@ -6,7 +6,7 @@ const { openDb, hashPassword, verifyPassword, seedJenis } = require('./db');
 const { createWa, waNorm } = require('./wa');
 const { backupNow, backupTerakhir } = require('./backup-lib');
 const { buildXlsx } = require('./xlsx');
-const { tablePdf, raporPdf, kuitansiPdf } = require('./pdf');
+const { tablePdf, raporPdf, kuitansiPdf, jadwalPdf } = require('./pdf');
 
 const rp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 // Logo per lembaga ada di public/logo/<kode>.png (web) dan public/logo/pdf/<kode>.jpg (kop PDF).
@@ -34,7 +34,7 @@ const TSTATUS = `CASE WHEN ${TERBAYAR} >= t.jumlah THEN 'lunas' WHEN ${TERBAYAR}
 const LJ = 'LEFT JOIN lembaga l ON l.id = ';
 const RES = {
   lembaga: {
-    a: 'l', table: 'lembaga', cols: ['kode', 'nama', 'jenjang', 'alamat', 'telepon', 'ppdb_buka'], req: ['kode', 'nama'],
+    a: 'l', table: 'lembaga', cols: ['kode', 'nama', 'jenjang', 'alamat', 'telepon', 'ppdb_buka', 'kepala'], req: ['kode', 'nama'],
     sel: 'SELECT l.* FROM lembaga l', search: ['l.nama', 'l.kode'], filters: {}, order: 'l.id',
     scopeCol: 'l.id', scopeKey: 'id', writeRole: 'yayasan',
   },
@@ -103,6 +103,17 @@ const RES = {
     search: ['s.nama', 'n.mapel'], filters: { siswa_id: 'n.siswa_id', kelas_id: 's.kelas_id', semester: 'n.semester' },
     order: 'n.tanggal DESC, n.id DESC', scopeCol: 's.lembaga_id', scopeKey: 'lembaga_id',
   },
+  jadwal: {
+    a: 'j', table: 'jadwal', cols: ['kelas_id', 'hari', 'mulai', 'selesai', 'judul', 'guru'], req: ['hari', 'mulai', 'selesai', 'judul'], own: true,
+    sel: `SELECT j.*, l.kode lembaga_kode, k.nama kelas_nama FROM jadwal j ${LJ}j.lembaga_id LEFT JOIN kelas k ON k.id = j.kelas_id`,
+    search: ['j.judul', 'j.guru', 'k.nama'], filters: { kelas_id: 'j.kelas_id', hari: 'j.hari' },
+    order: 'l.id, k.nama, j.hari, j.mulai', scopeCol: 'j.lembaga_id', scopeKey: 'lembaga_id',
+  },
+  mapel_rapor: {
+    a: 'm', table: 'mapel_rapor', cols: ['nama', 'kategori', 'kkm', 'urut'], req: ['nama'], own: true, enums: { kategori: ['pokok', 'kecakapan'] },
+    sel: `SELECT m.*, l.kode lembaga_kode FROM mapel_rapor m ${LJ}m.lembaga_id`,
+    search: ['m.nama'], filters: {}, order: 'l.id, m.kategori, m.urut, m.nama', scopeCol: 'm.lembaga_id', scopeKey: 'lembaga_id',
+  },
   pembayaran: {
     a: 'p', table: 'pembayaran', cols: ['siswa_id', 'jenis', 'bulan', 'jumlah', 'tanggal', 'keterangan'], req: ['siswa_id', 'jumlah', 'tanggal'],
     sel: `SELECT p.*, s.lembaga_id, l.kode lembaga_kode, l.nama lembaga_nama, s.nama siswa_nama, s.nis, k.nama kelas_nama FROM pembayaran p
@@ -124,15 +135,38 @@ const EXPORTS = {
   pendaftar: ['Data Pendaftar', [['Lembaga', 'lembaga_kode'], ['No. Daftar', 'no_daftar'], ['Nama', 'nama'], ['L/P', 'jk'], ['Tgl Lahir', 'tgl_lahir'], ['Asal Sekolah', 'asal_sekolah'], ['Telepon', 'telepon'], ['Status', 'status']]],
   'rekap-absensi': ['Rekap Absensi', [['NIS', 'nis'], ['Nama', 'nama'], ['Hadir', 'h'], ['Sakit', 's'], ['Izin', 'i'], ['Alpa', 'a']]],
 };
-const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin']);
+const NUMERIC = new Set(['nilai', 'jumlah', 'aktif', 'ppdb_buka', 'poin', 'hari', 'urut', 'kkm']);
 const KENAIKAN = ['naik', 'lulus', 'pindah', 'keluar'];
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 const str = (v, max) => String(v ?? '').trim().slice(0, max) || null;
 const ABSEN = new Set(['H', 'S', 'I', 'A']);
 const ROLES = ['yayasan', 'admin', 'staf', 'guru']; // 'wali' dikelola lewat /api/wali-akun
 // Guru hanya boleh: absensi dan pelanggaran (tulis), serta melihat kelas/siswa/jenis pelanggaran.
-const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran']);
-const GURU_BACA_SAJA = new Set(['kelas', 'siswa', 'jenis_pelanggaran']);
+const GURU_API = new Set(['me', 'logout', 'password', 'absensi', 'rekap-absensi', 'kelas', 'siswa', 'pelanggaran', 'jenis_pelanggaran', 'jadwal', 'jadwal-kelas']);
+const GURU_BACA_SAJA = new Set(['kelas', 'siswa', 'jenis_pelanggaran', 'jadwal', 'jadwal-kelas']);
+
+// Jadwal pelajaran
+const HARI_ALIAS = { senin: 1, selasa: 2, rabu: 3, kamis: 4, jumat: 5, "jum'at": 5, sabtu: 6, ahad: 7, minggu: 7 };
+const jam = (v) => {
+  const m = /^(\d{1,2})[.:](\d{2})$/.exec(String(v ?? '').trim());
+  return m && +m[1] <= 23 && +m[2] <= 59 ? `${m[1].padStart(2, '0')}:${m[2]}` : null;
+};
+const SIKAP_RAPOR = ['Sopan dalam berbicara, berpakaian dan berperilaku', 'Rajin dalam masuk madrasah dan kegiatan madrasah',
+  'Taat dalam melaksanakan tugas, perintah, dan peraturan', 'Disiplin dalam diri, sosial dan lingkungan', 'Tawadhuk, sederhana, bersahaja, dan hemat'];
+const SATUAN = ['', 'Satu', 'Dua', 'Tiga', 'Empat', 'Lima', 'Enam', 'Tujuh', 'Delapan', 'Sembilan'];
+function terbilang(n) {
+  n = Math.round(Number(n));
+  if (!(n >= 0 && n <= 100)) return '';
+  if (n === 0) return 'Nol';
+  if (n === 100) return 'Seratus';
+  const p = Math.floor(n / 10), s = n % 10;
+  if (n < 10) return SATUAN[n];
+  if (n === 10) return 'Sepuluh';
+  if (n === 11) return 'Sebelas';
+  if (n < 20) return SATUAN[s] + ' Belas';
+  return SATUAN[p] + ' Puluh' + (s ? ' ' + SATUAN[s] : '');
+}
+
 const MIN_PW = 8;
 const PERMINTAAN_JENIS = { salinan: 'Salinan data anak', koreksi: 'Koreksi data anak', hapus_data: 'Penghapusan data anak', hapus_akun: 'Penghapusan akun wali' };
 const PENDAFTAR_KEDALUWARSA = "status IN ('ditolak', 'cadangan', 'baru', 'terverifikasi')";   // belum menjadi siswa dan tidak sedang diproses
@@ -231,6 +265,7 @@ function createApp(dbFile, opts = {}) {
   function checkRefs(cfg, d, lembagaId, ctx) {
     if (cfg.table === 'siswa' && d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
     if (cfg.table === 'kelas' && d.wali_guru_id != null && lembagaOf('guru', d.wali_guru_id, ctx) !== lembagaId) throw new HttpError(400, 'Wali kelas berasal dari lembaga lain');
+    if (cfg.table === 'jadwal' && d.kelas_id != null && lembagaOf('kelas', d.kelas_id, ctx) !== lembagaId) throw new HttpError(400, 'Kelas berasal dari lembaga lain');
     if ((cfg.table === 'nilai' || cfg.table === 'pembayaran') && d.siswa_id != null) {
       const sl = lembagaOf('siswa', d.siswa_id, ctx);
       if (lembagaId != null && sl !== lembagaId) throw new HttpError(400, 'Siswa berasal dari lembaga lain');
@@ -551,7 +586,7 @@ function createApp(dbFile, opts = {}) {
 
   // ---- API untuk wali murid (hanya baca, hanya anak yang tertaut) ----
   function waliApi(parts, ctx, method = 'GET', body = {}) {
-    const anak = () => db.prepare(`SELECT s.id, s.nis, s.nama, s.jk, s.status, s.lembaga_id, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama, g.nama wali_kelas
+    const anak = () => db.prepare(`SELECT s.id, s.nis, s.nama, s.jk, s.status, s.lembaga_id, s.kelas_id, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama, g.nama wali_kelas
       FROM wali_siswa w JOIN siswa s ON s.id = w.siswa_id JOIN lembaga l ON l.id = s.lembaga_id
       LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN guru g ON g.id = k.wali_guru_id
       WHERE w.user_id = ? ORDER BY s.nama`).all(ctx.user.id);
@@ -565,6 +600,7 @@ function createApp(dbFile, opts = {}) {
         FROM absensi WHERE siswa_id = ? ${where}`).get(id, ...a);
       return {
         siswa,
+        jadwal: siswa.kelas_id ? jadwalRows(siswa.lembaga_id, siswa.kelas_id).map(({ hari, mulai, selesai, judul, guru }) => ({ hari, mulai, selesai, judul, guru })) : [],
         absensi: { bulan, bulan_ini: rek("AND substr(tanggal, 1, 7) = ?", bulan), semua: rek(''),
           terbaru: db.prepare('SELECT tanggal, status FROM absensi WHERE siswa_id = ? ORDER BY tanggal DESC LIMIT 14').all(id) },
         nilai: { rata: db.prepare('SELECT mapel, ROUND(AVG(nilai), 1) rata, COUNT(*) jumlah FROM nilai WHERE siswa_id = ? GROUP BY mapel ORDER BY mapel').all(id),
@@ -640,6 +676,7 @@ function createApp(dbFile, opts = {}) {
         if (!lid) throw new HttpError(400, 'Pilih lembaga terlebih dahulu');
         d.lembaga_id = lid;
       }
+      if (cfg.table === 'jadwal') cekJadwal(d, null);
       checkRefs(cfg, d, lid, ctx);
       if (cfg.table === 'pendaftar') fillPendaftar(d, lid, 'admin');
       if (cfg.table === 'pengumuman') Object.assign(d, { dibuat_oleh: ctx.user.nama, tanggal: todayWib() });
@@ -657,6 +694,7 @@ function createApp(dbFile, opts = {}) {
       const d = clean(cfg, body, false);
       const keys = Object.keys(d);
       if (!keys.length) throw new HttpError(400, 'Tidak ada data untuk diubah');
+      if (cfg.table === 'jadwal') cekJadwal(d, row);
       checkRefs(cfg, d, cfg.scopeKey ? row[cfg.scopeKey] : null, ctx);
       if (cfg.table === 'pelanggaran' && 'jenis_id' in d) fillPelanggaran({ ...d, siswa_id: row.siswa_id }, ctx, d);
       if (cfg.table === 'jenis_pelanggaran' && 'kode' in d) cekKodeJenis(d);
@@ -735,17 +773,123 @@ function createApp(dbFile, opts = {}) {
     };
   }
 
+  // ---- jadwal pelajaran ----
+  function cekJadwal(d, row) {
+    for (const k of ['mulai', 'selesai']) {
+      if (k in d && d[k] !== null) { d[k] = jam(d[k]); if (!d[k]) throw new HttpError(400, 'Jam harus berformat JJ.MM, mis. 07.00'); }
+    }
+    if ('hari' in d && !(Number.isInteger(d.hari) && d.hari >= 1 && d.hari <= 7)) throw new HttpError(400, 'Hari tidak valid (1 = Senin ... 7 = Ahad)');
+    const mulai = d.mulai ?? (row && row.mulai), selesai = d.selesai ?? (row && row.selesai);
+    if (mulai && selesai && selesai <= mulai) throw new HttpError(400, 'Jam selesai harus setelah jam mulai');
+    if ('judul' in d && d.judul) d.judul = d.judul.slice(0, 120);
+    if ('guru' in d && d.guru) d.guru = d.guru.slice(0, 120);
+  }
+  const jadwalRows = (lembagaId, kelasId) => db.prepare(`SELECT id, kelas_id, hari, mulai, selesai, judul, guru FROM jadwal
+    WHERE lembaga_id = ? AND (kelas_id = ? OR kelas_id IS NULL) ORDER BY hari, mulai, kelas_id IS NULL`).all(lembagaId, kelasId);
+  function jadwalKelas(q, ctx) {
+    const kelas = db.prepare('SELECT k.id, k.nama, k.lembaga_id, l.nama lembaga_nama, l.kode lembaga_kode FROM kelas k JOIN lembaga l ON l.id = k.lembaga_id WHERE k.id = ?').get(Number(q.kelas_id));
+    if (!kelas || !ctx.scope.ids.includes(kelas.lembaga_id)) throw new HttpError(404, 'Kelas tidak ditemukan');
+    return { kelas, rows: jadwalRows(kelas.lembaga_id, kelas.id) };
+  }
+  // Impor massal. Tiap baris: kelas;hari;mulai;selesai;judul;guru  (kelas "*" = semua kelas; pemisah ; atau tab)
+  function imporJadwal(body, ctx) {
+    const lid = ctx.scope.target;
+    if (!lid) throw new HttpError(400, 'Pilih lembaga terlebih dahulu');
+    const lines = String(body.text || '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+    if (!lines.length) throw new HttpError(400, 'Tidak ada data untuk diimpor');
+    if (lines.length > 5000) throw new HttpError(400, 'Maksimal 5000 baris per impor');
+    const kelasDb = new Map(db.prepare('SELECT id, nama FROM kelas WHERE lembaga_id = ?').all(lid).map((k) => [k.nama.toLowerCase(), k.id]));
+    const items = [], baru = new Set();
+    lines.forEach((ln, i) => {
+      const f = ln.split(/;|\t/).map((x) => x.trim());
+      if (i === 0 && /^kelas$/i.test(f[0])) return;
+      const no = `Baris ${i + 1}`;
+      if (f.length < 5) throw new HttpError(400, `${no}: kolom kurang (kelas;hari;mulai;selesai;judul;guru)`);
+      const hari = HARI_ALIAS[f[1].toLowerCase().replace(/[’`]/g, "'")] || (/^[1-7]$/.test(f[1]) ? Number(f[1]) : 0);
+      if (!hari) throw new HttpError(400, `${no}: hari "${f[1]}" tidak dikenal`);
+      const mulai = jam(f[2]), selesai = jam(f[3]);
+      if (!mulai || !selesai || selesai <= mulai) throw new HttpError(400, `${no}: jam tidak valid (${f[2]} - ${f[3]})`);
+      if (!f[4]) throw new HttpError(400, `${no}: judul kosong`);
+      const kn = f[0] === '*' ? null : f[0];
+      if (kn && !kelasDb.has(kn.toLowerCase())) baru.add(kn);
+      items.push({ kn, hari, mulai, selesai, judul: f[4].slice(0, 120), guru: (f[5] || '').slice(0, 120) || null });
+    });
+    if (baru.size && !body.buat_kelas) throw new HttpError(400, `Kelas belum ada: ${[...baru].join(', ')}. Centang "buat kelas yang belum ada" atau tambahkan kelasnya dulu.`);
+    const ta = activeTahun();
+    db.exec('BEGIN');
+    try {
+      for (const kn of baru) kelasDb.set(kn.toLowerCase(), Number(db.prepare('INSERT INTO kelas (lembaga_id, nama, tahun_ajaran) VALUES (?,?,?)').run(lid, kn, ta).lastInsertRowid));
+      if (body.ganti) {
+        for (const kn of new Set(items.map((x) => x.kn))) {
+          if (kn === null) db.prepare('DELETE FROM jadwal WHERE lembaga_id = ? AND kelas_id IS NULL').run(lid);
+          else db.prepare('DELETE FROM jadwal WHERE lembaga_id = ? AND kelas_id = ?').run(lid, kelasDb.get(kn.toLowerCase()));
+        }
+      }
+      const ins = db.prepare('INSERT INTO jadwal (lembaga_id, kelas_id, hari, mulai, selesai, judul, guru) VALUES (?,?,?,?,?,?,?)');
+      for (const x of items) ins.run(lid, x.kn === null ? null : kelasDb.get(x.kn.toLowerCase()), x.hari, x.mulai, x.selesai, x.judul, x.guru);
+      catat(ctx.user, 'impor_jadwal', `${items.length} baris, lembaga #${lid}${body.ganti ? ', mengganti jadwal lama' : ''}`);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { ok: true, baris: items.length, kelas_baru: [...baru] };
+  }
+
+  // ---- rapor ----
+  const RAPOR_KUNCI = /^(sikap[1-5]|sakit|izin|alpa|cat:.{1,100})$/;
+  const raporCatatan = (siswaId, sem) => Object.fromEntries(db.prepare('SELECT kunci, nilai FROM rapor_catatan WHERE siswa_id = ? AND semester = ?').all(siswaId, sem || '').map((r) => [r.kunci, r.nilai]));
+  function simpanRaporCatatan(body, ctx) {
+    const siswa = db.prepare('SELECT id, lembaga_id FROM siswa WHERE id = ?').get(Number(body.siswa_id));
+    if (!siswa || !ctx.scope.ids.includes(siswa.lembaga_id)) throw new HttpError(404, 'Siswa tidak ditemukan');
+    const sem = str(body.semester, 30) || '';
+    const data = body.data && typeof body.data === 'object' ? body.data : {};
+    const up = db.prepare('INSERT INTO rapor_catatan (siswa_id, semester, kunci, nilai) VALUES (?,?,?,?) ON CONFLICT (siswa_id, semester, kunci) DO UPDATE SET nilai = excluded.nilai');
+    const del = db.prepare('DELETE FROM rapor_catatan WHERE siswa_id = ? AND semester = ? AND kunci = ?');
+    db.exec('BEGIN');
+    try {
+      for (const [k, v] of Object.entries(data)) {
+        if (!RAPOR_KUNCI.test(k)) throw new HttpError(400, 'Kolom rapor tidak dikenal');
+        const val = str(v, 300);
+        if (val === null) del.run(siswa.id, sem, k); else up.run(siswa.id, sem, k, val);
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { ok: true };
+  }
+
   function rapor(q, ctx) {
     if (!q.siswa_id) throw new HttpError(400, 'siswa_id wajib diisi');
-    const siswa = db.prepare(`SELECT s.*, l.nama lembaga_nama, l.kode lembaga_kode, k.nama kelas_nama, g.nama wali_kelas FROM siswa s
+    const siswa = db.prepare(`SELECT s.*, l.nama lembaga_nama, l.kode lembaga_kode, l.jenjang, l.kepala kepala_lembaga, l.alamat lembaga_alamat, k.nama kelas_nama, g.nama wali_kelas FROM siswa s
       JOIN lembaga l ON l.id = s.lembaga_id LEFT JOIN kelas k ON k.id = s.kelas_id LEFT JOIN guru g ON g.id = k.wali_guru_id WHERE s.id = ?`).get(q.siswa_id);
     if (!siswa || !ctx.scope.ids.includes(siswa.lembaga_id)) throw new HttpError(404, 'Siswa tidak ditemukan');
     const sem = q.semester || null;
-    const nilai = db.prepare(`SELECT mapel, ROUND(AVG(nilai), 1) rata, COUNT(*) jumlah FROM nilai
+    let nilai = db.prepare(`SELECT mapel, ROUND(AVG(nilai), 1) rata, COUNT(*) jumlah FROM nilai
       WHERE siswa_id = ? AND (? IS NULL OR semester = ?) GROUP BY mapel ORDER BY mapel`).all(siswa.id, sem, sem);
     const absen = db.prepare(`SELECT SUM(status = 'H') h, SUM(status = 'S') s, SUM(status = 'I') i, SUM(status = 'A') a
       FROM absensi WHERE siswa_id = ?`).get(siswa.id);
-    return { siswa, semester: sem, nilai, absensi: absen };
+    const out = { siswa, semester: sem, nilai, absensi: absen, format: siswa.jenjang === 'Madin' ? 'madin' : 'umum' };
+    if (out.format !== 'madin') return out;
+    // Format Madin (ASAT): mapel pokok/kecakapan dengan KKM, nilai angka + huruf, rata-rata kelas, catatan guru, kepribadian, ketidakhadiran
+    const cat = raporCatatan(siswa.id, sem);
+    const kelasRata = new Map(siswa.kelas_id ? db.prepare(`SELECT n.mapel, ROUND(AVG(n.nilai), 1) rata FROM nilai n JOIN siswa x ON x.id = n.siswa_id
+      WHERE x.kelas_id = ? AND (? IS NULL OR n.semester = ?) GROUP BY n.mapel`).all(siswa.kelas_id, sem, sem).map((r) => [r.mapel, r.rata]) : []);
+    const byMapel = new Map(nilai.map((n) => [n.mapel, n]));
+    const susun = (m, kategori) => {
+      const n = byMapel.get(m.nama); byMapel.delete(m.nama);
+      return { mapel: m.nama, kategori, kkm: m.kkm, rata: n ? n.rata : null, huruf: n ? terbilang(n.rata) : '', kelas_rata: kelasRata.get(m.nama) ?? null, catatan: cat['cat:' + m.nama] || '' };
+    };
+    const cfg = db.prepare('SELECT nama, kategori, kkm FROM mapel_rapor WHERE lembaga_id = ? ORDER BY urut, nama').all(siswa.lembaga_id);
+    const pokok = cfg.filter((m) => m.kategori === 'pokok').map((m) => susun(m, 'pokok'));
+    const kecakapan = cfg.filter((m) => m.kategori === 'kecakapan').map((m) => susun(m, 'kecakapan'));
+    for (const n of byMapel.values()) pokok.push(susun({ nama: n.mapel, kkm: null }, 'pokok'));   // mapel bernilai yang belum didaftarkan
+    const nilaiAda = [...pokok, ...kecakapan].filter((m) => m.rata !== null);
+    out.madin = {
+      pokok, kecakapan,
+      jumlah: nilaiAda.reduce((a, m) => a + m.rata, 0),
+      rata: nilaiAda.length ? Math.round(nilaiAda.reduce((a, m) => a + m.rata, 0) / nilaiAda.length * 10) / 10 : null,
+      sikap: SIKAP_RAPOR.map((t, i) => ({ teks: t, nilai: cat['sikap' + (i + 1)] || '' })),
+      ketidakhadiran: { sakit: cat.sakit ?? String(absen.s || 0), izin: cat.izin ?? String(absen.i || 0), alpa: cat.alpa ?? String(absen.a || 0) },
+      tahun_ajaran: siswa.tahun_ajaran || activeTahun() || '', tanggal: q.tanggal && isDate(q.tanggal) ? q.tanggal : todayWib(),
+    };
+    return out;
   }
 
   // ---- manajemen pengguna: yayasan = semua; admin lembaga = hanya staf di lembaganya ----
@@ -932,6 +1076,10 @@ function createApp(dbFile, opts = {}) {
         return file(tablePdf({ title: 'Salinan Data Siswa', subtitle: `${d.siswa.nama} · ${d.siswa.lembaga_nama} · dibuat ${today} · diserahkan kepada orang tua/wali atas permintaan`,
           headers: ['Kategori', 'Tanggal', 'Uraian'], rows: d.rows, logo: logoJpeg(d.siswa.lembaga_kode) }), 'application/pdf', `salinan-data-${d.siswa.id}.pdf`);
       }
+      if (name === 'pdf' && key === 'jadwal') {
+        const j = jadwalKelas(q, ctx);
+        return file(jadwalPdf({ lembaga: j.kelas.lembaga_nama, kelas: j.kelas.nama, tahun: activeTahun(), rows: j.rows, logo: logoJpeg(j.kelas.lembaga_kode) }), 'application/pdf', `jadwal-${j.kelas.id}.pdf`);
+      }
       if (name === 'pdf' && key === 'rapor') { const r = rapor(q, ctx); return file(raporPdf(r, logoJpeg(r.siswa.lembaga_kode)), 'application/pdf', `rapor-${q.siswa_id}.pdf`); }
       if (name === 'pdf' && key === 'kuitansi') { const pb = crud(RES.pembayaran, 'GET', Number(q.id), {}, {}, ctx); return file(kuitansiPdf(pb, rp, logoJpeg(pb.lembaga_kode)), 'application/pdf', `kuitansi-${q.id}.pdf`); }
       const ex = EXPORTS[key];
@@ -993,6 +1141,16 @@ function createApp(dbFile, opts = {}) {
     }
     if (name === 'dashboard') return send(res, 200, dashboard(ctx));
     if (name === 'rapor') return send(res, 200, rapor(q, ctx));
+    if (name === 'rapor-catatan') {
+      if (method === 'PUT') return send(res, 200, simpanRaporCatatan(await readBody(req), ctx));
+      const r = rapor({ siswa_id: q.siswa_id, semester: q.semester }, ctx);
+      return send(res, 200, raporCatatan(r.siswa.id, q.semester));
+    }
+    if (name === 'jadwal-kelas') return send(res, 200, jadwalKelas(q, ctx));
+    if (name === 'jadwal-impor' && method === 'POST') {
+      if (ctx.user.role === 'guru') throw new HttpError(403, 'Akses ditolak');
+      return send(res, 200, imporJadwal(await readBody(req), ctx));
+    }
     if (name === 'rekap-absensi') return send(res, 200, rekapAbsensi(q, ctx));
     if (name === 'absensi') return send(res, 200, absensi(method, q, method === 'POST' ? await readBody(req) : {}, ctx));
     if (name === 'users') return send(res, 200, users(method, id, method === 'POST' || method === 'PUT' ? await readBody(req) : {}, ctx));

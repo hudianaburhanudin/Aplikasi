@@ -114,6 +114,14 @@ const views = {
       <div class="card"><h3>Riwayat pembayaran</h3>${p.length ? p.map((x) => `<div class="item"><div>${esc(x.jenis)} ${esc(bln(x.bulan))}<div class="s">${tgl(x.tanggal)}${x.keterangan ? ' · ' + esc(x.keterangan) : ''}</div></div><div class="r"><b>${rp(x.jumlah)}</b></div></div>`).join('') : '<div class="empty">Belum ada pembayaran.</div>'}</div>
       <p class="muted small">Pembayaran dilakukan di tata usaha lembaga. Status tagihan diperbarui setelah petugas mencatat pembayaran.</p>`;
   },
+  jadwal() {
+    const j = data.jadwal || [];
+    if (!j.length) return '<div class="empty">Jadwal pelajaran belum tersedia.</div>';
+    const hariIni = ((new Date().getDay() + 6) % 7) + 1;
+    const NAMA = ['', 'Senin', 'Selasa', 'Rabu', 'Kamis', "Jum'at", 'Sabtu', 'Ahad'];
+    return [...new Set(j.map((x) => x.hari))].sort((a, b) => a - b).map((h) => `<div class="card"><h3>${NAMA[h]}${h === hariIni ? ' ' + chip('lunas', 'Hari ini') : ''}</h3>${j.filter((x) => x.hari === h).map((x) =>
+      `<div class="item"><div>${esc(x.judul)}${x.guru ? `<div class="s">${esc(x.guru)}</div>` : ''}</div><div class="r"><span class="small">${esc(x.mulai.replace(':', '.'))} - ${esc(x.selesai.replace(':', '.'))}</span></div></div>`).join('')}</div>`).join('');
+  },
   berita() {
     return news.length ? news.map((x) => `<div class="card news"><h4>${esc(x.judul)}</h4><div class="small muted">${tgl(x.tanggal)} · ${esc(x.lembaga)}</div><p>${esc(x.isi)}</p></div>`).join('') : '<div class="empty">Belum ada pengumuman.</div>';
   },

@@ -27,7 +27,12 @@ Tanpa dependensi eksternal: Node.js (>= 22.13) + SQLite bawaan Node + frontend H
   tampil di aplikasi wali. Peran **Guru** hanya mengakses absensi dan pelanggaran.
 - **Siswa, Guru, Kelas**: tambah/ubah/hapus, pencarian, filter (NIS boleh sama antar lembaga)
 - **Absensi** harian per kelas + rekap bulanan
-- **Nilai** dan **Rapor** per siswa
+- **Jadwal pelajaran** per kelas (baris tanpa kelas = berlaku untuk semua kelas), tampilan tabel hari × jam, **PDF**,
+  impor massal CSV, dan tab **Jadwal** di aplikasi wali. Jadwal asli yayasan ada di `data/jadwal/` (MI semua kelas,
+  SMK kelas X DKV, SMP kelas VII–IX; kode guru pada PDF sudah diganti nama) - impor lewat Jadwal → *Impor massal*.
+- **Nilai** dan **Rapor** per siswa. Lembaga berjenjang **Madin** memakai format rapor ASAT (mapel pokok/kecakapan + KKM,
+  nilai angka dan huruf, rata-rata kelas, catatan guru, kepribadian, ketidakhadiran, tanda tangan wali kelas & kepala);
+  mapel dan KKM diatur di **Mapel Rapor**, sikap/catatan diisi lewat tombol di halaman Rapor. Lembaga lain memakai format umum.
 - **Pembayaran** (SPP dll.) dan kuitansi
 - **Ekspor Excel (.xlsx) dan PDF** (daftar, rapor, kuitansi) sesuai filter aktif
 - Login, ganti password, reset password oleh admin

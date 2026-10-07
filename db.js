@@ -114,6 +114,20 @@ const MIGRATIONS = [
      lembaga_ids TEXT, ringkasan TEXT,   -- lingkup lembaga dan nama anak saat permintaan dibuat (tetap ada setelah akun dihapus)
      dibuat TEXT NOT NULL DEFAULT (datetime('now')), diproses TEXT, diproses_oleh TEXT, hasil TEXT);
    CREATE INDEX idx_permintaan_status ON permintaan_data(status, id);`,
+  // v8: jadwal pelajaran (kelas_id kosong = berlaku untuk semua kelas di lembaga), mapel rapor, catatan rapor
+  `CREATE TABLE jadwal (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id),
+     kelas_id INTEGER REFERENCES kelas(id) ON DELETE CASCADE,
+     hari INTEGER NOT NULL, mulai TEXT NOT NULL, selesai TEXT NOT NULL, judul TEXT NOT NULL, guru TEXT);
+   ALTER TABLE lembaga ADD COLUMN kepala TEXT;
+   CREATE INDEX idx_jadwal ON jadwal(lembaga_id, kelas_id, hari, mulai);
+   CREATE TABLE mapel_rapor (
+     id INTEGER PRIMARY KEY, lembaga_id INTEGER NOT NULL REFERENCES lembaga(id),
+     nama TEXT NOT NULL, kategori TEXT NOT NULL DEFAULT 'pokok', kkm REAL, urut INTEGER NOT NULL DEFAULT 0,
+     UNIQUE (lembaga_id, nama));
+   CREATE TABLE rapor_catatan (
+     siswa_id INTEGER NOT NULL REFERENCES siswa(id) ON DELETE CASCADE, semester TEXT NOT NULL, kunci TEXT NOT NULL, nilai TEXT,
+     PRIMARY KEY (siswa_id, semester, kunci));`,
 ];
 
 function migrate(db) {
