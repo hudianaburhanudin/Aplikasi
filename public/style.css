@@ -38,7 +38,7 @@ tr:last-child td{border-bottom:0}td.act{text-align:right;white-space:normal;min-
 .bars div{display:grid;grid-template-columns:90px 1fr 30px;gap:8px;align-items:center;margin:6px 0}
 .bars i{display:block;height:10px;background:var(--pri);border-radius:5px}
 .error{color:var(--bad);margin:0;min-height:1em}
-dialog{border:0;border-radius:12px;padding:0;width:min(520px,94vw);box-shadow:0 10px 40px #0004}
+dialog{border:0;border-radius:12px;padding:0;width:min(520px,94vw);box-shadow:0 10px 40px #0004;max-height:92vh;overflow:auto}dialog.wide{width:min(1100px,96vw)}
 dialog form{padding:20px;display:grid;gap:12px}dialog h3{margin:0}
 .fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fields .full{grid-column:1/-1}
 .actions{display:flex;justify-content:flex-end;gap:8px}

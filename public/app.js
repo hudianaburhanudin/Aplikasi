@@ -54,6 +54,7 @@ function openForm(title, fields, values, onSave) {
   }).join('')}</div><p class="error" id="formErr"></p>
   <div class="actions"><button type="button" class="btn" id="cancelBtn">Batal</button><button class="btn primary" value="ok">Simpan</button></div>`;
   const dlg = $('#dlg');
+  dlg.classList.remove('wide');
   $('#cancelBtn').onclick = () => dlg.close();
   f.onsubmit = async (e) => {
     e.preventDefault();
@@ -64,7 +65,8 @@ function openForm(title, fields, values, onSave) {
   dlg.showModal();
 }
 
-function showInfo(title, html) {
+function showInfo(title, html, wide) {
+  $('#dlg').classList.toggle('wide', !!wide);
   $('#dlgForm').innerHTML = `<h3>${esc(title)}</h3>${html}<div class="actions"><button type="button" class="btn" id="cancelBtn">Tutup</button></div>`;
   $('#dlgForm').onsubmit = null; $('#cancelBtn').onclick = () => $('#dlg').close(); $('#dlg').showModal();
 }
@@ -447,7 +449,7 @@ pages.jadwal = crudPage({
     { label: 'Lihat tabel', run: guard(async () => {
       const k = kelasFilter(); if (!k) return toast('Pilih kelas dulu', true);
       const d = await api('jadwal-kelas?' + qs({ kelas_id: k }));
-      showInfo(`Jadwal kelas ${d.kelas.nama} · ${d.kelas.lembaga_nama}`, jadwalGrid(d.rows));
+      showInfo(`Jadwal kelas ${d.kelas.nama} · ${d.kelas.lembaga_nama}`, jadwalGrid(d.rows), true);
     }) },
     { label: '⬇ PDF', run: () => { const k = kelasFilter(); if (!k) return toast('Pilih kelas dulu', true); download('pdf/jadwal?' + qs({ kelas_id: k })); } },
     { label: 'Impor massal', run: (load) => {
