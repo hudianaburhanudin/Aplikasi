@@ -28,3 +28,9 @@ python ocr_core.py buku.pdf buku_ocr.pdf -l ind+ara
 
 Mode: `skip` (lewati halaman yang sudah berteks), `force` (OCR ulang semua), `redo` (ganti teks lama).
 Batas unggah web default 200 MB (`MAX_MB=500 python app.py` untuk mengubah).
+
+## Ukuran file
+
+Bawaan aplikasi tidak mengubah gambar asli, jadi ukuran hasil nyaris sama dengan file asli
+(hanya bertambah lapisan teks, sekitar beberapa persen). Dua opsi ini menggambar ulang halaman dan
+membuat file membesar: "luruskan halaman miring" (`--deskew`) dan mode "paksa OCR ulang" (`force`).

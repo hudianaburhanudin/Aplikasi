@@ -19,11 +19,15 @@ def bahasa_terpasang():
     return [l.strip() for l in out.splitlines()[1:] if l.strip() and l.strip() != "osd"]
 
 
-def ocr_pdf(src: Path, dst: Path, lang="ind+eng", mode="skip", deskew=True, rotate=True, optimize=1):
+def ocr_pdf(src: Path, dst: Path, lang="ind+eng", mode="skip", deskew=False, rotate=True, optimize=1):
     """Jalankan OCR.
 
+    Bawaan menjaga gambar asli tidak disentuh, jadi ukuran file nyaris sama
+    (hanya bertambah lapisan teks). deskew & mode 'force' menggambar ulang
+    halaman sehingga ukuran file membesar.
+
     mode: 'skip'  -> lewati halaman yang sudah berteks
-          'force' -> rasterisasi semua halaman lalu OCR ulang
+          'force' -> rasterisasi semua halaman lalu OCR ulang (file membesar)
           'redo'  -> buang teks lama, OCR ulang
     """
     cmd = [sys.executable, "-m", "ocrmypdf", "-l", lang, "--optimize", str(optimize), "--output-type", "pdf"]
@@ -55,11 +59,12 @@ if __name__ == "__main__":
     ap.add_argument("input", type=Path)
     ap.add_argument("output", type=Path, nargs="?")
     ap.add_argument("-l", "--lang", default="ind+eng", help="mis. ind, eng, ara, ind+ara")
+    ap.add_argument("--deskew", action="store_true", help="luruskan halaman miring (ukuran file bisa membesar)")
     ap.add_argument("-m", "--mode", choices=["skip", "force", "redo"], default="skip")
     a = ap.parse_args()
     out = a.output or a.input.with_name(a.input.stem + "_ocr.pdf")
     try:
-        ocr_pdf(a.input, out, a.lang, a.mode)
+        ocr_pdf(a.input, out, a.lang, a.mode, deskew=a.deskew)
     except RuntimeError as e:
         sys.exit(str(e))
     print("Selesai:", out)

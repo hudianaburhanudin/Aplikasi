@@ -27,8 +27,9 @@
 </fieldset>
 <fieldset><legend>Mode</legend>
   <label><input type="radio" name="mode" value="skip" checked> Lewati halaman yang sudah berteks</label>
-  <label><input type="radio" name="mode" value="force"> Paksa OCR ulang semua halaman</label>
+  <label><input type="radio" name="mode" value="force"> Paksa OCR ulang semua halaman (ukuran file membesar)</label>
   <label><input type="radio" name="mode" value="redo"> Ganti teks lama (OCR sebelumnya jelek)</label>
+  <label><input type="checkbox" id="deskew"> Luruskan halaman miring (ukuran file membesar)</label>
 </fieldset>
 <button id="go" disabled>Proses OCR</button>
 <div id="msg"></div>
@@ -43,6 +44,7 @@ drop.ondrop=e=>{e.preventDefault();drop.classList.remove('on');pick(e.dataTransf
 $('#go').onclick=async()=>{
   const fd=new FormData();fd.append('pdf',file);
   document.querySelectorAll('[name=lang]:checked').forEach(c=>fd.append('lang',c.value));
+  if($('#deskew').checked)fd.append('deskew','1');
   fd.append('mode',document.querySelector('[name=mode]:checked').value);
   $('#go').disabled=true;$('#msg').className='';$('#msg').textContent='Memproses… (dokumen besar bisa beberapa menit)';
   try{

@@ -34,7 +34,7 @@ def ocr():
     src, dst = WORK / f"{job}_in.pdf", WORK / f"{job}_out.pdf"
     f.save(src)
     try:
-        ocr_pdf(src, dst, "+".join(langs), mode)
+        ocr_pdf(src, dst, "+".join(langs), mode, deskew=request.form.get("deskew") == "1")
     except RuntimeError as e:
         return jsonify(error=str(e)), 422
     finally:
