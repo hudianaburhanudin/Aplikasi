@@ -51,3 +51,13 @@ python ocr_core.py buku.pdf --inplace                      # satu file, ditimpa
 ```
 
 Server web hanya menerima koneksi dari komputer sendiri (127.0.0.1), karena mode folder bisa menimpa file.
+
+## Jalan di latar belakang (macOS, tanpa Terminal)
+
+```bash
+./install_mac.sh              # pasang; aplikasi aktif di http://127.0.0.1:5050
+./install_mac.sh uninstall    # hapus
+```
+
+Aplikasi otomatis berjalan setiap Anda login dan hidup lagi bila mati. Terminal boleh ditutup.
+Setelah `git pull` untuk pembaruan, jalankan `./install_mac.sh` lagi. Log ada di `~/Library/Logs/ocr-pdf.log`.
