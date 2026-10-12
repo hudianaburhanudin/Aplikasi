@@ -1,12 +1,15 @@
 """Aplikasi web OCR PDF. Jalankan: python app.py  lalu buka http://localhost:5000"""
 import os
+import subprocess
+import sys
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 
 from flask import Flask, render_template, request, send_file, jsonify
 
-from ocr_core import BAHASA, bahasa_terpasang, ocr_pdf
+from ocr_core import BAHASA, bahasa_terpasang, ocr_folder, ocr_pdf
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_MB", 200)) * 1024 * 1024
@@ -45,5 +48,58 @@ def ocr():
     return resp
 
 
+JOBS = {}
+
+
+@app.post("/pilih-folder")
+def pilih_folder():
+    """Buka dialog pilih folder bawaan sistem (aplikasi ini berjalan di komputer pengguna)."""
+    if sys.platform == "darwin":
+        cmd = ["osascript", "-e", 'POSIX path of (choose folder with prompt "Pilih folder berisi PDF")']
+    else:
+        cmd = [sys.executable, "-c",
+               "import tkinter as t, tkinter.filedialog as f; r=t.Tk(); r.withdraw(); "
+               "r.attributes('-topmost', True); print(f.askdirectory(title='Pilih folder berisi PDF'))"]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except Exception as e:
+        return jsonify(error=f"Tidak bisa membuka dialog folder: {e}"), 500
+    path = p.stdout.strip()
+    if p.returncode != 0 or not path:
+        return jsonify(batal=True)
+    return jsonify(path=path.rstrip("/") or "/")
+
+
+@app.post("/folder")
+def folder():
+    d = request.get_json(force=True)
+    path = Path(str(d.get("path", "")).strip().strip("\"'")).expanduser()
+    if not path.is_dir():
+        return jsonify(error=f"Folder tidak ditemukan: {path}"), 400
+    langs = [l for l in d.get("lang", []) if l in bahasa_terpasang()] or ["eng"]
+    mode = d.get("mode", "skip") if d.get("mode") in ("skip", "force", "redo") else "skip"
+    job = uuid.uuid4().hex
+    st = JOBS[job] = {"selesai": False, "i": 0, "n": 0, "file": "", "hasil": None}
+
+    def kerja():
+        def prog(i, n, f):
+            st.update(i=i, n=n, file=str(f))
+        try:
+            st["hasil"] = ocr_folder(path, "+".join(langs), mode, bool(d.get("deskew")),
+                                     bool(d.get("backup")), bool(d.get("rekursif", True)), prog)
+        except Exception as e:
+            st["hasil"] = {"ok": 0, "lewati": 0, "gagal": [(str(path), str(e))]}
+        st["selesai"] = True
+
+    threading.Thread(target=kerja, daemon=True).start()
+    return jsonify(job=job)
+
+
+@app.get("/status/<job>")
+def status(job):
+    return jsonify(JOBS.get(job) or {"selesai": True, "hasil": {"ok": 0, "lewati": 0, "gagal": [["", "Job tidak ditemukan"]]}})
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # Hanya 127.0.0.1: mode folder bisa menimpa file, jangan dibuka ke jaringan.
+    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)))

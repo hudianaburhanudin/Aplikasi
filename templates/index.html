@@ -33,6 +33,17 @@
 </fieldset>
 <button id="go" disabled>Proses OCR</button>
 <div id="msg"></div>
+
+<hr style="margin:2rem 0">
+<h2 style="font-size:1.1rem">Atau: OCR satu folder (hasil menggantikan file lama)</h2>
+<p><small>Semua PDF di folder diproses. File yang sudah berteks dilewati. File asli hanya diganti setelah OCR berhasil.
+Pengaturan bahasa, mode, dan luruskan di atas ikut dipakai.</small></p>
+<button id="pick" type="button" style="background:#555">Pilih folder…</button>
+<div id="path" style="margin:.5rem 0;padding:.6rem;border:1px solid #ccc;border-radius:8px;color:#666;word-break:break-all">Belum ada folder dipilih</div>
+<label><input type="checkbox" id="rek" checked> Termasuk subfolder</label>
+<label><input type="checkbox" id="bak"> Simpan cadangan (nama.bak.pdf, ukuran jadi dua kali)</label>
+<button id="gof" style="margin-top:.6rem" disabled>Proses folder</button>
+<div id="fmsg"></div>
 <script>
 const $=s=>document.querySelector(s);let file=null;
 const drop=$('#drop'),inp=$('#file');
@@ -55,6 +66,35 @@ $('#go').onclick=async()=>{
     $('#msg').className='ok';$('#msg').textContent='Selesai. File diunduh.';
   }catch(e){$('#msg').className='err';$('#msg').textContent=e.message}
   $('#go').disabled=false;
+};
+let folderPath='';
+$('#pick').onclick=async()=>{
+  $('#pick').disabled=true;
+  try{
+    const j=await (await fetch('/pilih-folder',{method:'POST'})).json();
+    if(j.error){$('#fmsg').className='err';$('#fmsg').textContent=j.error}
+    else if(j.path){folderPath=j.path;$('#path').textContent=j.path;$('#path').style.color='#222';$('#gof').disabled=false;$('#fmsg').textContent=''}
+  }catch(e){$('#fmsg').className='err';$('#fmsg').textContent=e.message}
+  $('#pick').disabled=false;
+};
+$('#gof').onclick=async()=>{
+  const path=folderPath;if(!path)return;
+  if(!confirm('Semua PDF di folder:\n'+path+'\nakan DIGANTI dengan versi berteks. Lanjutkan?'))return;
+  const body={path,rekursif:$('#rek').checked,backup:$('#bak').checked,deskew:$('#deskew').checked,
+    mode:document.querySelector('[name=mode]:checked').value,
+    lang:[...document.querySelectorAll('[name=lang]:checked')].map(c=>c.value)};
+  const f=$('#fmsg');f.className='';$('#gof').disabled=true;f.textContent='Memulai…';
+  const r=await fetch('/folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(!r.ok){f.className='err';f.textContent=j.error;$('#gof').disabled=false;return}
+  const t=setInterval(async()=>{
+    const s=await (await fetch('/status/'+j.job)).json();
+    if(!s.selesai){f.textContent=`Memproses ${s.i}/${s.n}: ${s.file}`;return}
+    clearInterval(t);$('#gof').disabled=false;const h=s.hasil;
+    f.className=h.gagal.length?'err':'ok';
+    f.innerHTML=`Selesai: ${h.ok} di-OCR, ${h.lewati} dilewati (sudah berteks), ${h.gagal.length} gagal`+
+      h.gagal.map(g=>`<br>• ${g[0]}: ${g[1]}`).join('');
+  },1500);
 };
 </script>
 </body>

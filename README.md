@@ -34,3 +34,20 @@ Batas unggah web default 200 MB (`MAX_MB=500 python app.py` untuk mengubah).
 Bawaan aplikasi tidak mengubah gambar asli, jadi ukuran hasil nyaris sama dengan file asli
 (hanya bertambah lapisan teks, sekitar beberapa persen). Dua opsi ini menggambar ulang halaman dan
 membuat file membesar: "luruskan halaman miring" (`--deskew`) dan mode "paksa OCR ulang" (`force`).
+
+## OCR satu folder (menggantikan file lama)
+
+Di halaman web, klik **Pilih folder…**, pilih folder, lalu **Proses folder**. Semua PDF di dalamnya
+(termasuk subfolder) diproses dan hasilnya menggantikan file lama. PDF yang sudah berteks dilewati,
+dan file asli baru diganti setelah OCR berhasil serta jumlah halamannya cocok. Centang "Simpan cadangan"
+bila ingin menyimpan `nama.bak.pdf`.
+
+Lewat baris perintah:
+
+```bash
+python ocr_core.py ~/Documents/buku -l ind+ara            # satu folder
+python ocr_core.py ~/Documents/buku --backup              # dengan cadangan
+python ocr_core.py buku.pdf --inplace                      # satu file, ditimpa
+```
+
+Server web hanya menerima koneksi dari komputer sendiri (127.0.0.1), karena mode folder bisa menimpa file.
