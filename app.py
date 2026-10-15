@@ -1,4 +1,5 @@
 """Aplikasi web OCR PDF. Jalankan: python app.py  lalu buka http://localhost:5000"""
+import io
 import os
 import subprocess
 import zipfile
@@ -58,19 +59,14 @@ def ocr():
                     z.write(dst, stem + "_ocr.pdf")
                     z.writestr(stem + ".txt", teks)
                 nama, mime = stem + "_ocr.zip", "application/zip"
+        data = keluar.read_bytes()
     except RuntimeError as e:
         return jsonify(error=str(e)), 422
     finally:
-        src.unlink(missing_ok=True)
-        side.unlink(missing_ok=True)
-
-    def bersih():
-        for x in (dst, keluar):
+        # Semua file sementara dihapus segera; hasil dikirim dari memori.
+        for x in (src, side, dst, keluar):
             x.unlink(missing_ok=True)
-
-    resp = send_file(keluar, as_attachment=True, download_name=nama, mimetype=mime)
-    resp.call_on_close(bersih)
-    return resp
+    return send_file(io.BytesIO(data), as_attachment=True, download_name=nama, mimetype=mime)
 
 
 JOBS = {}
