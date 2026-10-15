@@ -61,3 +61,17 @@ Server web hanya menerima koneksi dari komputer sendiri (127.0.0.1), karena mode
 
 Aplikasi otomatis berjalan setiap Anda login dan hidup lagi bila mati. Terminal boleh ditutup.
 Setelah `git pull` untuk pembaruan, jalankan `./install_mac.sh` lagi. Log ada di `~/Library/Logs/ocr-pdf.log`.
+
+## Format hasil: PDF, teks (.txt), atau keduanya
+
+Pilih "Format hasil" di halaman web, atau `-f pdf|txt|both` di baris perintah.
+
+- **Unggah satu file:** unduhan berupa PDF, `.txt`, atau `.zip` berisi keduanya.
+- **Mode folder:** `txt` membuat `nama.txt` di sebelah PDF dan **tidak mengubah PDF**; `both` mengganti PDF
+  sekaligus membuat `nama.txt`. Berkas `.txt` lama dengan nama sama akan ditimpa.
+- Halaman PDF yang sudah berteks ikut masuk ke `.txt`; antarhalaman dipisah satu baris kosong.
+
+```bash
+python ocr_core.py buku.pdf -f txt                  # menghasilkan buku.txt
+python ocr_core.py ~/Documents/buku -f both -l ind+ara
+```

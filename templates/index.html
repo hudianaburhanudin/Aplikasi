@@ -25,6 +25,11 @@
   <label><input type="checkbox" name="lang" value="{{kode}}" {{ 'checked' if kode=='ind' }}> {{nama}}</label>
   {% endfor %}
 </fieldset>
+<fieldset><legend>Format hasil</legend>
+  <label><input type="radio" name="format" value="pdf" checked> PDF berteks</label>
+  <label><input type="radio" name="format" value="txt"> Teks saja (.txt)</label>
+  <label><input type="radio" name="format" value="both"> Keduanya (PDF + .txt)</label>
+</fieldset>
 <fieldset><legend>Mode</legend>
   <label><input type="radio" name="mode" value="skip" checked> Lewati halaman yang sudah berteks</label>
   <label><input type="radio" name="mode" value="force"> Paksa OCR ulang semua halaman (ukuran file membesar)</label>
@@ -35,7 +40,7 @@
 <div id="msg"></div>
 
 <hr style="margin:2rem 0">
-<h2 style="font-size:1.1rem">Atau: OCR satu folder (hasil menggantikan file lama)</h2>
+<h2 style="font-size:1.1rem">Atau: OCR satu folder (hasil di tempat yang sama)</h2>
 <p><small>Semua PDF di folder diproses. File yang sudah berteks dilewati. File asli hanya diganti setelah OCR berhasil.
 Pengaturan bahasa, mode, dan luruskan di atas ikut dipakai.</small></p>
 <button id="pick" type="button" style="background:#555">Pilih folder…</button>
@@ -56,13 +61,14 @@ $('#go').onclick=async()=>{
   const fd=new FormData();fd.append('pdf',file);
   document.querySelectorAll('[name=lang]:checked').forEach(c=>fd.append('lang',c.value));
   if($('#deskew').checked)fd.append('deskew','1');
+  const fmt=document.querySelector('[name=format]:checked').value;fd.append('format',fmt);
   fd.append('mode',document.querySelector('[name=mode]:checked').value);
   $('#go').disabled=true;$('#msg').className='';$('#msg').textContent='Memproses… (dokumen besar bisa beberapa menit)';
   try{
     const r=await fetch('/ocr',{method:'POST',body:fd});
     if(!r.ok){throw new Error((await r.json()).error)}
     const b=await r.blob(),a=document.createElement('a');
-    a.href=URL.createObjectURL(b);a.download=file.name.replace(/\.pdf$/i,'')+'_ocr.pdf';a.click();
+    a.href=URL.createObjectURL(b);a.download=file.name.replace(/\.pdf$/i,'')+({pdf:'_ocr.pdf',txt:'.txt',both:'_ocr.zip'})[fmt];a.click();
     $('#msg').className='ok';$('#msg').textContent='Selesai. File diunduh.';
   }catch(e){$('#msg').className='err';$('#msg').textContent=e.message}
   $('#go').disabled=false;
@@ -79,9 +85,10 @@ $('#pick').onclick=async()=>{
 };
 $('#gof').onclick=async()=>{
   const path=folderPath;if(!path)return;
-  if(!confirm('Semua PDF di folder:\n'+path+'\nakan DIGANTI dengan versi berteks. Lanjutkan?'))return;
+  if(!confirm('Semua PDF di folder:\n'+path+'\n'+({pdf:'akan DIGANTI dengan versi berteks.',txt:'akan dibuatkan file .txt di sebelahnya (PDF tidak diubah; .txt lama bernama sama ditimpa).',both:'akan DIGANTI dengan versi berteks, plus dibuatkan file .txt di sebelahnya (.txt lama bernama sama ditimpa).'})[document.querySelector('[name=format]:checked').value]+' Lanjutkan?'))return;
   const body={path,rekursif:$('#rek').checked,backup:$('#bak').checked,deskew:$('#deskew').checked,
     mode:document.querySelector('[name=mode]:checked').value,
+    format:document.querySelector('[name=format]:checked').value,
     lang:[...document.querySelectorAll('[name=lang]:checked')].map(c=>c.value)};
   const f=$('#fmsg');f.className='';$('#gof').disabled=true;f.textContent='Memulai…';
   const r=await fetch('/folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

@@ -1,6 +1,7 @@
 """Aplikasi web OCR PDF. Jalankan: python app.py  lalu buka http://localhost:5000"""
 import os
 import subprocess
+import zipfile
 import sys
 import tempfile
 import threading
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from flask import Flask, render_template, request, send_file, jsonify
 
-from ocr_core import BAHASA, bahasa_terpasang, ocr_folder, ocr_pdf
+from ocr_core import BAHASA, FORMAT, bahasa_terpasang, buat_txt, ocr_folder, ocr_pdf
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_MB", 200)) * 1024 * 1024
@@ -33,18 +34,42 @@ def ocr():
     mode = request.form.get("mode", "skip")
     if mode not in ("skip", "force", "redo"):
         mode = "skip"
+    fmt = request.form.get("format", "pdf")
+    if fmt not in FORMAT:
+        fmt = "pdf"
     job = uuid.uuid4().hex
     src, dst = WORK / f"{job}_in.pdf", WORK / f"{job}_out.pdf"
+    side = WORK / f"{job}_side.txt"
+    keluar = WORK / f"{job}_final"
     f.save(src)
     try:
-        ocr_pdf(src, dst, "+".join(langs), mode, deskew=request.form.get("deskew") == "1")
+        ocr_pdf(src, dst, "+".join(langs), mode, deskew=request.form.get("deskew") == "1",
+                sidecar=side if fmt != "pdf" else None)
+        stem = Path(f.filename).stem
+        if fmt == "pdf":
+            nama, mime, keluar = stem + "_ocr.pdf", "application/pdf", dst
+        else:
+            teks = buat_txt(side, dst)
+            if fmt == "txt":
+                keluar.write_text(teks, encoding="utf-8")
+                nama, mime = stem + ".txt", "text/plain; charset=utf-8"
+            else:
+                with zipfile.ZipFile(keluar, "w", zipfile.ZIP_DEFLATED) as z:
+                    z.write(dst, stem + "_ocr.pdf")
+                    z.writestr(stem + ".txt", teks)
+                nama, mime = stem + "_ocr.zip", "application/zip"
     except RuntimeError as e:
         return jsonify(error=str(e)), 422
     finally:
         src.unlink(missing_ok=True)
-    nama = Path(f.filename).stem + "_ocr.pdf"
-    resp = send_file(dst, as_attachment=True, download_name=nama, mimetype="application/pdf")
-    resp.call_on_close(lambda: dst.unlink(missing_ok=True))
+        side.unlink(missing_ok=True)
+
+    def bersih():
+        for x in (dst, keluar):
+            x.unlink(missing_ok=True)
+
+    resp = send_file(keluar, as_attachment=True, download_name=nama, mimetype=mime)
+    resp.call_on_close(bersih)
     return resp
 
 
@@ -86,7 +111,8 @@ def folder():
             st.update(i=i, n=n, file=str(f))
         try:
             st["hasil"] = ocr_folder(path, "+".join(langs), mode, bool(d.get("deskew")),
-                                     bool(d.get("backup")), bool(d.get("rekursif", True)), prog)
+                                     bool(d.get("backup")), bool(d.get("rekursif", True)), prog,
+                                     d.get("format") if d.get("format") in FORMAT else "pdf")
         except Exception as e:
             st["hasil"] = {"ok": 0, "lewati": 0, "gagal": [(str(path), str(e))]}
         st["selesai"] = True
