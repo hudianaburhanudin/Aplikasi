@@ -100,6 +100,7 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
   <button class="btn" id="menuBtn" aria-label="Buka daftar buku dan bab">☰</button>
   <h1 id="bookTitle">Buku Bersuara</h1>
   <button class="btn" id="openBtn">Buka buku</button>
+  <button class="btn" id="audioBtn" title="Unduh hasil suara sebagai file MP3">Unduh audio</button>
   <button class="btn" id="exportBtn" title="Simpan teks (dan terjemahan) buku ini ke file">Ekspor</button>
   <button class="btn" id="settingsBtn">Pengaturan suara</button>
   <button class="btn" id="themeBtn" aria-label="Ganti tema">◐</button>
@@ -193,6 +194,21 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
   <div class="dlg-actions">
     <button class="btn" id="testVoice">Coba suara</button>
     <button class="btn primary" id="setClose">Selesai</button>
+  </div>
+</dialog>
+
+<dialog id="audioDlg">
+  <h3>Unduh audio (MP3)</h3>
+  <div id="audioNeed" hidden>
+    <p>Mesin suara <b>bawaan perangkat</b> tidak bisa direkam ke file oleh peramban. Pilih mesin suara natural (OpenAI atau ElevenLabs) dan isi kunci API di Pengaturan suara, lalu coba lagi.</p>
+    <div class="dlg-actions"><button class="btn" id="audioNeedClose">Tutup</button><button class="btn primary" id="audioNeedSet">Buka pengaturan</button></div>
+  </div>
+  <div id="audioForm">
+    <div class="row two"><label for="audioScope">Yang diunduh</label><select id="audioScope"><option value="ch">Bab yang sedang dibuka</option><option value="all">Seluruh buku</option></select></div>
+    <p class="note" id="audioInfo"></p>
+    <progress id="audioProg" value="0" max="1" style="width:100%" hidden></progress>
+    <p class="note" id="audioStatus" role="status"></p>
+    <div class="dlg-actions"><button class="btn" id="audioClose">Tutup</button><button class="btn primary" id="audioGo">Buat &amp; unduh</button></div>
   </div>
 </dialog>
 
@@ -407,17 +423,21 @@ const PRESET = {
 };
 const cloud = {audio: null, cache: new Map()};
 function cloudCfg(){ const e = S.cfg.engine, p = PRESET[e]; return {e, key: S.cfg.apiKey.trim(), voice: S.cfg.cVoice || p.voice, model: S.cfg.cModel || p.model, base: (S.cfg.cBase || p.base).replace(/\/+$/, "")}; }
-function cloudFetch(text){
-  const c = cloudCfg(), k = [c.e, c.voice, c.model, c.base, text].join("|");
-  if(cloud.cache.has(k)) return cloud.cache.get(k);
+function cloudBlob(text){
+  const c = cloudCfg();
   if(!c.key) return Promise.reject(new Error("Kunci API belum diisi (Pengaturan suara)"));
   const req = c.e === "openai"
     ? fetch(c.base + "/audio/speech", {method: "POST", headers: {"Authorization": "Bearer " + c.key, "Content-Type": "application/json"}, body: JSON.stringify({model: c.model, voice: c.voice, input: text, response_format: "mp3"})})
     : fetch(`${c.base}/text-to-speech/${encodeURIComponent(c.voice)}?output_format=mp3_44100_128`, {method: "POST", headers: {"xi-api-key": c.key, "Content-Type": "application/json"}, body: JSON.stringify({text, model_id: c.model})});
-  const pr = req.then(async r => {
+  return req.then(async r => {
     if(!r.ok){ let m = ""; try{ m = (await r.text()).slice(0, 160); }catch(e){} throw new Error(`${r.status} ${m}`); }
-    return URL.createObjectURL(await r.blob());
+    return r.blob();
   });
+}
+function cloudFetch(text){
+  const c = cloudCfg(), k = [c.e, c.voice, c.model, c.base, text].join("|");
+  if(cloud.cache.has(k)) return cloud.cache.get(k);
+  const pr = cloudBlob(text).then(b => URL.createObjectURL(b));
   cloud.cache.set(k, pr);
   pr.catch(() => cloud.cache.delete(k));
   if(cloud.cache.size > 12){ const old = cloud.cache.keys().next().value; cloud.cache.get(old).then(URL.revokeObjectURL, () => {}); cloud.cache.delete(old); }
@@ -719,6 +739,62 @@ $("exportBtn").onclick = () => {
   a.download = S.book.title.replace(/[\\/:*?"<>|]/g, "_") + (ar ? " (Arab-Indonesia)" : "") + ".txt";
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
+/* ---- Unduh audio ---- */
+const AU = {abort: false, running: false};
+function audioSegments(scope){
+  const ar = S.book.mode === "ar";
+  const chs = scope === "all" ? S.book.chapters : [S.book.chapters[S.ci]];
+  return chs.flatMap(c => splitSentences(c.text, ar).map(x => x.t));
+}
+function audioInfo(){
+  if(!S.book) return;
+  const segs = audioSegments($("audioScope").value), chars = segs.reduce((n, t) => n + t.length, 0);
+  const ar = S.book.mode === "ar" && S.cfg.arPart !== "ar" ? " (dihitung dua kali karena terjemahan juga dibacakan)" : "";
+  $("audioInfo").textContent = `${segs.length} potongan, ±${chars.toLocaleString("id")} karakter${ar}. Biaya ditagih penyedia suara sesuai jumlah karakter. Hasil berupa satu file MP3 dengan kecepatan normal (percepat di pemutar bila perlu).`;
+}
+async function makeAudio(){
+  if(AU.running) return;
+  AU.running = true; AU.abort = false;
+  const segs = audioSegments($("audioScope").value), ar = S.book.mode === "ar", part = S.cfg.arPart;
+  const out = new Array(segs.length), prog = $("audioProg"); prog.hidden = false; prog.max = segs.length; prog.value = 0;
+  $("audioGo").disabled = true; $("audioGo").textContent = "Memproses…"; $("audioClose").textContent = "Batal";
+  let next = 0, done = 0, fail = null;
+  const worker = async () => {
+    while(!AU.abort && !fail){
+      const i = next++; if(i >= segs.length) return;
+      try{
+        const t = segs[i], parts = [];
+        if(!ar) parts.push(await cloudBlob(t));
+        else {
+          if(part !== "id") parts.push(await cloudBlob(t));
+          if(part !== "ar"){ const tr = await translate(t); parts.push(await cloudBlob(tr)); }
+        }
+        out[i] = parts; prog.value = ++done; $("audioStatus").textContent = `Selesai ${done} dari ${segs.length} potongan…`;
+      }catch(e){ fail = e; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  AU.running = false; $("audioGo").disabled = false; $("audioGo").textContent = "Buat & unduh"; $("audioClose").textContent = "Tutup";
+  if(AU.abort){ $("audioStatus").textContent = "Dibatalkan."; return; }
+  if(fail){ $("audioStatus").textContent = "Gagal: " + fail.message + (done ? ` (${done} potongan sudah jadi, tetapi file tidak dibuat)` : ""); return; }
+  const blob = new Blob(out.flat(), {type: "audio/mpeg"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  const name = S.book.title.replace(/[\\/:*?"<>|]/g, "_") + ($("audioScope").value === "ch" ? " - " + S.book.chapters[S.ci].title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 40) : "");
+  a.download = name + ".mp3"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  $("audioStatus").textContent = `Selesai. File ${(blob.size / 1048576).toFixed(1)} MB diunduh.`;
+}
+$("audioBtn").onclick = () => {
+  if(!S.book) return toast("Buka buku dulu");
+  const need = S.cfg.engine === "device";
+  $("audioNeed").hidden = !need; $("audioForm").hidden = need;
+  $("audioStatus").textContent = ""; $("audioProg").hidden = true; audioInfo();
+  $("audioDlg").showModal();
+};
+$("audioScope").onchange = audioInfo;
+$("audioGo").onclick = makeAudio;
+$("audioClose").onclick = () => { if(AU.running) AU.abort = true; else $("audioDlg").close(); };
+$("audioNeedClose").onclick = () => $("audioDlg").close();
+$("audioNeedSet").onclick = () => { $("audioDlg").close(); $("setDlg").showModal(); };
 $("arBtn").onclick = () => {
   if(!S.book) return toast("Buka buku dulu");
   const was = S.playing; setPlaying(false);

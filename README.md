@@ -42,6 +42,9 @@ Untuk buku berbahasa Arab (terdeteksi otomatis, atau tombol **Mode Arab**): teks
 
 Penerjemah (Pengaturan suara): **MyMemory** (gratis, kuota harian terbatas), **Claude** (kunci Anthropic), atau **OpenAI**. Untuk kitab/teks keagamaan, pakai Claude atau OpenAI agar mutunya baik. Pilihan “Yang dibacakan”: Arab+terjemahan, Arab saja, atau terjemahan saja. Suara Arab bawaan perangkat harus terpasang (ar-SA); mesin suara natural otomatis mengenali Arab.
 
+## Unduh audio (MP3)
+Tombol **Unduh audio** membuat satu file MP3 untuk bab yang dibuka atau seluruh buku. Di mode Arab, isinya teks Arab lalu terjemahan Indonesia, sesuai pilihan “Yang dibacakan”. Fitur ini butuh mesin suara natural (OpenAI/ElevenLabs) dan kunci API, karena suara bawaan perangkat tidak bisa direkam ke file oleh peramban. Biaya ditagih penyedia per karakter; kecepatan file normal.
+
 ## Catatan
 - Suara memakai Web Speech API bawaan perangkat. Kualitas dan ketersediaan suara bahasa Indonesia tergantung sistem (pasang suara id-ID di pengaturan sistem jika tidak muncul).
 - PDF hasil scan (gambar) tidak bisa dibacakan tanpa OCR.
