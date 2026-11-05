@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buku Bersuara</title>
+<meta name="description" content="Ubah buku (TXT, PDF, EPUB) menjadi suara dan dengarkan kalimat demi kalimat.">
+<style>
+:root{
+  --bg:#f6f4ef; --panel:#ffffff; --ink:#1d1d1b; --muted:#6b6a64; --line:#e3e0d7;
+  --accent:#1f6f5c; --accent-ink:#ffffff; --hl:#ffe9a8; --done:#9a988f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121413; --panel:#1b1e1d; --ink:#ececE6; --muted:#9a9d97; --line:#2c302e;
+    --accent:#4fb89c; --accent-ink:#0d1210; --hl:#4a4020; --done:#7d807a;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121413; --panel:#1b1e1d; --ink:#ececE6; --muted:#9a9d97; --line:#2c302e;
+  --accent:#4fb89c; --accent-ink:#0d1210; --hl:#4a4020; --done:#7d807a;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
+button,select,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:18px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:8px 12px;min-height:40px}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,.sent:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+main{flex:1;min-height:0;display:grid;grid-template-columns:280px 1fr}
+aside{border-right:1px solid var(--line);background:var(--panel);overflow:auto;padding:12px}
+aside h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 6px}
+aside h2:first-child{margin-top:0}
+.list{list-style:none;margin:0;padding:0}
+.list li{display:flex;gap:4px;align-items:stretch}
+.list li button.item{flex:1;text-align:left;border:0;background:none;padding:8px;border-radius:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list li button.item:hover{background:var(--bg)}
+.list li.active button.item{background:var(--bg);font-weight:600;color:var(--accent)}
+.list li .x{border:0;background:none;color:var(--muted);padding:0 8px;border-radius:6px}
+.list li .x:hover{color:#c0392b}
+.bar{height:3px;background:var(--line);border-radius:3px;margin:0 8px 4px}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:3px}
+#reader{overflow:auto;padding:24px 16px 32px}
+.page{max-width:720px;margin:0 auto;font-size:var(--fs,19px);line-height:1.85;font-family:Georgia,"Times New Roman",serif}
+.page h2{font-family:system-ui,sans-serif;font-size:1.1em;margin:0 0 1em}
+.page p{margin:0 0 1.1em}
+.sent{border-radius:4px;cursor:pointer;padding:1px 0}
+.sent:hover{background:var(--bg)}
+.sent.done{color:var(--done)}
+.sent.now{background:var(--hl);color:var(--ink);box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.empty{max-width:560px;margin:8vh auto;text-align:center;color:var(--muted)}
+.empty h2{color:var(--ink)}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:28px 16px;margin:18px 0}
+.drop.over{border-color:var(--accent);background:var(--panel)}
+footer{background:var(--panel);border-top:1px solid var(--line);padding:10px 16px}
+.progress{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.progress input{flex:1;accent-color:var(--accent)}
+.controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin-top:8px}
+.controls .btn{min-width:48px}
+.controls .play{min-width:92px;font-weight:600}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);max-width:520px;width:calc(100% - 24px);padding:18px}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h3{margin:0 0 12px}
+.row{display:grid;grid-template-columns:130px 1fr 54px;gap:8px;align-items:center;margin:10px 0}
+.row.two{grid-template-columns:130px 1fr}
+.row input[type=range]{accent-color:var(--accent);width:100%}
+.row select{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.row output{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+textarea{width:100%;min-height:200px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.note{font-size:13px;color:var(--muted)}
+.dlg-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+#toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+#menuBtn{display:none}
+@media (max-width:760px){
+  main{grid-template-columns:1fr}
+  aside{position:fixed;inset:57px 0 auto 0;max-height:60vh;z-index:5;border-right:0;border-bottom:1px solid var(--line);display:none;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+  aside.open{display:block}
+  #menuBtn{display:inline-block}
+  .row{grid-template-columns:100px 1fr 48px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <button class="btn" id="menuBtn" aria-label="Buka daftar buku dan bab">☰</button>
+  <h1 id="bookTitle">Buku Bersuara</h1>
+  <button class="btn" id="openBtn">Buka buku</button>
+  <button class="btn" id="settingsBtn">Pengaturan suara</button>
+  <button class="btn" id="themeBtn" aria-label="Ganti tema">◐</button>
+</header>
+
+<main>
+  <aside id="side">
+    <h2>Bab</h2>
+    <ul class="list" id="chapterList"></ul>
+    <h2>Pustaka</h2>
+    <ul class="list" id="library"></ul>
+  </aside>
+  <section id="reader" aria-live="off">
+    <div class="empty" id="empty">
+      <h2>Ubah buku menjadi suara</h2>
+      <p>Buka file <b>TXT, PDF, atau EPUB</b>, atau tempel teks. Aplikasi membacakannya kalimat demi kalimat, dengan sorotan pada kalimat yang sedang dibaca.</p>
+      <div class="drop" id="drop">Seret file buku ke sini</div>
+      <button class="btn primary" id="openBtn2">Pilih file atau tempel teks</button>
+    </div>
+    <article class="page" id="page" hidden></article>
+  </section>
+</main>
+
+<footer>
+  <div class="progress">
+    <span id="posLabel">–</span>
+    <input type="range" id="seek" min="0" max="0" value="0" aria-label="Posisi kalimat dalam bab">
+    <span id="timeLabel"></span>
+  </div>
+  <div class="controls">
+    <button class="btn" id="prevCh" title="Bab sebelumnya" aria-label="Bab sebelumnya">⏮</button>
+    <button class="btn" id="prevS" title="Kalimat sebelumnya (←)" aria-label="Kalimat sebelumnya">◀</button>
+    <button class="btn primary play" id="play" aria-label="Putar">▶ Putar</button>
+    <button class="btn" id="nextS" title="Kalimat berikutnya (→)" aria-label="Kalimat berikutnya">▶</button>
+    <button class="btn" id="nextCh" title="Bab berikutnya" aria-label="Bab berikutnya">⏭</button>
+    <button class="btn" id="repeat" title="Ulangi kalimat ini (R)">Ulangi kalimat</button>
+  </div>
+</footer>
+
+<dialog id="openDlg">
+  <h3>Buka buku</h3>
+  <div class="row two"><label for="file">File</label><input type="file" id="file" accept=".txt,.md,.pdf,.epub,text/plain,application/pdf,application/epub+zip"></div>
+  <p class="note">Atau tempel teks di bawah ini.</p>
+  <input type="text" id="pasteTitle" placeholder="Judul (opsional)" aria-label="Judul">
+  <textarea id="pasteText" placeholder="Tempel isi buku di sini…" aria-label="Teks buku"></textarea>
+  <p class="note" id="openStatus" role="status"></p>
+  <div class="dlg-actions">
+    <button class="btn" id="openCancel">Tutup</button>
+    <button class="btn primary" id="pasteGo">Gunakan teks</button>
+  </div>
+</dialog>
+
+<dialog id="setDlg">
+  <h3>Pengaturan suara</h3>
+  <div class="row two"><label for="voice">Suara</label><select id="voice"></select></div>
+  <div class="row two"><label for="lang">Bahasa</label>
+    <select id="lang"><option value="id">Indonesia</option><option value="en">Inggris</option><option value="ar">Arab</option><option value="">Semua</option></select></div>
+  <div class="row"><label for="rate">Kecepatan</label><input type="range" id="rate" min="0.5" max="2" step="0.05"><output id="rateO"></output></div>
+  <div class="row"><label for="pitch">Nada</label><input type="range" id="pitch" min="0.5" max="1.5" step="0.05"><output id="pitchO"></output></div>
+  <div class="row"><label for="vol">Volume</label><input type="range" id="vol" min="0" max="1" step="0.05"><output id="volO"></output></div>
+  <div class="row"><label for="pause">Jeda antar kalimat</label><input type="range" id="pause" min="0" max="2000" step="100"><output id="pauseO"></output></div>
+  <div class="row"><label for="fs">Ukuran huruf</label><input type="range" id="fs" min="15" max="32" step="1"><output id="fsO"></output></div>
+  <div class="row two"><label for="sleep">Timer tidur</label>
+    <select id="sleep"><option value="0">Mati</option><option value="10">10 menit</option><option value="20">20 menit</option><option value="30">30 menit</option><option value="60">60 menit</option></select></div>
+  <div class="row two"><label for="autoNext">Lanjut bab</label>
+    <select id="autoNext"><option value="1">Otomatis ke bab berikutnya</option><option value="0">Berhenti di akhir bab</option></select></div>
+  <p class="note" id="voiceNote"></p>
+  <div class="dlg-actions">
+    <button class="btn" id="testVoice">Coba suara</button>
+    <button class="btn primary" id="setClose">Selesai</button>
+  </div>
+</dialog>
+
+<div id="toast" role="status"></div>
+
+<script>
+"use strict";
+/* ============ Util ============ */
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+let toastT;
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"),2500); }
+
+const loadedScripts = {};
+function loadScript(src){
+  return loadedScripts[src] || (loadedScripts[src] = new Promise((res, rej) => {
+    const s = document.createElement("script"); s.src = src; s.onload = res;
+    s.onerror = () => { delete loadedScripts[src]; rej(new Error("Gagal memuat pustaka dari internet: " + src)); };
+    document.head.appendChild(s);
+  }));
+}
+
+/* ============ Penyimpanan buku (IndexedDB) ============ */
+const db = {
+  _p: null,
+  open(){
+    return this._p || (this._p = new Promise((res, rej) => {
+      const r = indexedDB.open("buku-bersuara", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("books", {keyPath: "id"});
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    }));
+  },
+  async tx(mode, fn){
+    const d = await this.open();
+    return new Promise((res, rej) => {
+      const t = d.transaction("books", mode); const out = fn(t.objectStore("books"));
+      t.oncomplete = () => res(out && out.result !== undefined ? out.result : undefined); t.onerror = () => rej(t.error);
+    });
+  },
+  all(){ return this.tx("readonly", s => s.getAll()); },
+  get(id){ return this.tx("readonly", s => s.get(id)); },
+  put(b){ return this.tx("readwrite", s => s.put(b)); },
+  del(id){ return this.tx("readwrite", s => s.delete(id)); }
+};
+
+/* ============ Pemecah teks ============ */
+const PROTECT = /\b(dr|Dr|drs|Drs|Prof|prof|Ir|Hj|Hr|KH|Kh|St|Mr|Mrs|Ms|No|no|hlm|dll|dsb|dst|yg|dg|tgl|Jl|vs|Bpk|Ibu|Sdr|Tn|Ny|a\.n|u\.p|s\.d|ra|as|saw|swt|Q\.S|QS)\./g;
+function splitSentences(text){
+  const out = [];
+  for(const para of text.split(/\n{1,}/)){
+    const p = para.replace(/\s+/g, " ").trim();
+    if(!p) continue;
+    const safe = p.replace(PROTECT, m => m.slice(0, -1) + "\u0001");
+    const parts = safe.split(/(?<=[.!?…؟。])["”’')\]]*\s+(?=[^\s])/);
+    const sents = [];
+    for(let part of parts){
+      part = part.replace(/\u0001/g, ".").trim();
+      if(!part) continue;
+      if(part.length > 320){
+        // kalimat sangat panjang: potong di tanda baca agar tidak terputus oleh mesin suara
+        const bits = part.split(/(?<=[,;:])\s+/);
+        let cur = "";
+        for(const b of bits){
+          if((cur + " " + b).length > 260 && cur){ sents.push(cur.trim()); cur = b; } else cur += " " + b;
+        }
+        if(cur.trim()) sents.push(cur.trim());
+      } else sents.push(part);
+    }
+    sents.forEach((s, i) => out.push({t: s, para: i === 0}));
+  }
+  return out;
+}
+
+const HEAD_RE = /^\s*(bab|chapter|bagian|pasal|juz|jilid|kitab|fasal|mukadimah|pendahuluan|prolog|epilog|daftar isi)\b[^\n]{0,80}$/gim;
+function splitChapters(text, title){
+  text = text.replace(/\r\n?/g, "\n").replace(/ /g, " ").trim();
+  const marks = [];
+  let m; HEAD_RE.lastIndex = 0;
+  while((m = HEAD_RE.exec(text))) marks.push({i: m.index, len: m[0].length, title: m[0].trim()});
+  let chapters = [];
+  if(marks.length >= 2){
+    if(marks[0].i > 200) chapters.push({title: "Awal", text: text.slice(0, marks[0].i)});
+    marks.forEach((mk, k) => {
+      const end = k + 1 < marks.length ? marks[k + 1].i : text.length;
+      const body = text.slice(mk.i + mk.len, end);
+      chapters.push({title: mk.title, text: body});
+    });
+  } else {
+    // tanpa judul bab: potong per ±6000 karakter di batas paragraf
+    const paras = text.split(/\n+/); let cur = "", n = 1;
+    for(const p of paras){
+      if(cur.length + p.length > 6000 && cur){ chapters.push({title: "Bagian " + n++, text: cur}); cur = ""; }
+      cur += p + "\n";
+    }
+    if(cur.trim()) chapters.push({title: chapters.length || n > 1 ? "Bagian " + n : (title || "Teks"), text: cur});
+  }
+  return chapters.filter(c => c.text.trim().length > 0);
+}
+
+/* ============ Pembaca file ============ */
+async function readPdf(file){
+  await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+  let text = "";
+  for(let n = 1; n <= pdf.numPages; n++){
+    $("openStatus").textContent = `Membaca halaman ${n} dari ${pdf.numPages}…`;
+    const content = await (await pdf.getPage(n)).getTextContent();
+    let line = "", lastY = null;
+    for(const it of content.items){
+      const y = it.transform ? it.transform[5] : 0;
+      if(lastY !== null && Math.abs(y - lastY) > 2){ line += "\n"; }
+      line += it.str + (it.hasEOL ? "\n" : "");
+      lastY = y;
+    }
+    // gabungkan baris yang terpotong di tengah kalimat
+    text += line.replace(/-\n(?=[a-z])/g, "").replace(/([^.!?:\n])\n(?=[a-z؀-ۿ])/g, "$1 ") + "\n\n";
+  }
+  if(text.replace(/\s/g, "").length < 50) throw new Error("PDF ini tampaknya hasil scan (gambar) tanpa teks, sehingga tidak bisa dibacakan. Gunakan PDF dengan teks yang bisa diseleksi atau jalankan OCR dulu.");
+  return text;
+}
+async function readEpub(file){
+  await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js");
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const parseXml = s => new DOMParser().parseFromString(s, "application/xml");
+  const container = parseXml(await zip.file("META-INF/container.xml").async("string"));
+  const opfPath = container.querySelector("rootfile").getAttribute("full-path");
+  const opf = parseXml(await zip.file(opfPath).async("string"));
+  const base = opfPath.includes("/") ? opfPath.replace(/[^/]+$/, "") : "";
+  const manifest = {};
+  opf.querySelectorAll("manifest > item").forEach(i => manifest[i.getAttribute("id")] = i.getAttribute("href"));
+  const title = (opf.querySelector("metadata > *|title, title") || {}).textContent || "";
+  const chapters = [];
+  const refs = [...opf.querySelectorAll("spine > itemref")];
+  for(let k = 0; k < refs.length; k++){
+    $("openStatus").textContent = `Membaca bagian ${k + 1} dari ${refs.length}…`;
+    const href = manifest[refs[k].getAttribute("idref")]; if(!href) continue;
+    const f = zip.file(decodeURIComponent(base + href)); if(!f) continue;
+    const doc = new DOMParser().parseFromString(await f.async("string"), "text/html");
+    doc.querySelectorAll("script,style,nav,sup.footnote").forEach(n => n.remove());
+    const h = doc.querySelector("h1,h2,h3");
+    const blocks = [...doc.querySelectorAll("p,h1,h2,h3,h4,li,blockquote,div")]
+      .filter(n => !n.querySelector("p,h1,h2,h3,h4,li,blockquote,div"))
+      .map(n => n.textContent.replace(/\s+/g, " ").trim()).filter(Boolean);
+    const body = blocks.length ? blocks.join("\n") : (doc.body ? doc.body.textContent : "");
+    if(body.trim().length < 40) continue;
+    chapters.push({title: (h && h.textContent.trim()) || `Bagian ${chapters.length + 1}`, text: body});
+  }
+  if(!chapters.length) throw new Error("Tidak ada teks yang ditemukan di EPUB ini.");
+  return {title: title.trim(), chapters};
+}
+
+async function importFile(file){
+  const name = file.name.replace(/\.[^.]+$/, "");
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  let title = name, chapters;
+  if(ext === "epub"){ const r = await readEpub(file); chapters = r.chapters; if(r.title) title = r.title; }
+  else if(ext === "pdf"){ chapters = splitChapters(await readPdf(file), title); }
+  else { chapters = splitChapters(await file.text(), title); }
+  if(!chapters.length) throw new Error("Tidak ada teks yang bisa dibacakan.");
+  return {title, chapters};
+}
+
+/* ============ Mesin suara ============ */
+const synthOK = "speechSynthesis" in window;
+const S = {
+  book: null, ci: 0, si: 0, sents: [], playing: false, token: 0, pauseT: null, sleepT: null, sleepAt: 0,
+  cfg: Object.assign({voice: "", lang: "id", rate: 1, pitch: 1, vol: 1, pause: 300, fs: 19, sleep: 0, autoNext: "1"}, store.get("cfg", {})),
+  voices: []
+};
+
+function loadVoices(){
+  if(!synthOK) return;
+  S.voices = speechSynthesis.getVoices();
+  fillVoices();
+}
+function fillVoices(){
+  const sel = $("voice"), want = S.cfg.lang;
+  const list = S.voices.filter(v => !want || v.lang.toLowerCase().startsWith(want)).sort((a, b) => (b.localService - a.localService) || a.name.localeCompare(b.name));
+  sel.innerHTML = "";
+  const def = document.createElement("option"); def.value = ""; def.textContent = "Bawaan perangkat"; sel.appendChild(def);
+  list.forEach(v => { const o = document.createElement("option"); o.value = v.name; o.textContent = `${v.name} (${v.lang})${v.localService ? "" : " · online"}`; sel.appendChild(o); });
+  sel.value = list.some(v => v.name === S.cfg.voice) ? S.cfg.voice : "";
+  $("voiceNote").textContent = !S.voices.length ? "Belum ada suara terdeteksi. Pada beberapa peramban suara baru muncul beberapa detik setelah halaman dibuka."
+    : (want && !list.length ? "Tidak ada suara untuk bahasa ini di perangkat Anda. Pasang suara bahasa tersebut di pengaturan sistem, atau pilih “Semua”." : "");
+}
+if(synthOK){ loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+
+function pickVoice(){
+  if(S.cfg.voice){ const v = S.voices.find(v => v.name === S.cfg.voice); if(v) return v; }
+  if(S.cfg.lang){ return S.voices.find(v => v.lang.toLowerCase().startsWith(S.cfg.lang) && v.localService) || S.voices.find(v => v.lang.toLowerCase().startsWith(S.cfg.lang)) || null; }
+  return null;
+}
+
+function speakCurrent(){
+  clearTimeout(S.pauseT);
+  if(!synthOK || !S.book) return;
+  const s = S.sents[S.si]; if(!s){ return endOfChapter(); }
+  const my = ++S.token;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(s.t);
+  const v = pickVoice(); if(v){ u.voice = v; u.lang = v.lang; } else u.lang = S.cfg.lang === "ar" ? "ar-SA" : S.cfg.lang === "en" ? "en-US" : "id-ID";
+  u.rate = +S.cfg.rate; u.pitch = +S.cfg.pitch; u.volume = +S.cfg.vol;
+  u.onend = () => {
+    if(my !== S.token || !S.playing) return;
+    S.si++; save(); mark();
+    if(S.si >= S.sents.length) return endOfChapter();
+    S.pauseT = setTimeout(() => { if(my === S.token && S.playing) speakCurrent(); }, +S.cfg.pause + (S.sents[S.si].para ? 250 : 0));
+  };
+  u.onerror = e => { if(my !== S.token) return; if(e.error !== "interrupted" && e.error !== "canceled"){ toast("Gagal memutar suara: " + e.error); setPlaying(false); } };
+  speechSynthesis.speak(u);
+}
+function endOfChapter(){
+  if(S.cfg.autoNext === "1" && S.ci + 1 < S.book.chapters.length){ gotoChapter(S.ci + 1, 0, true); }
+  else { setPlaying(false); S.si = 0; save(); mark(); toast("Selesai dibaca"); }
+}
+function setPlaying(p){
+  S.playing = p;
+  $("play").textContent = p ? "⏸ Jeda" : "▶ Putar";
+  $("play").setAttribute("aria-label", p ? "Jeda" : "Putar");
+  if(!p){ S.token++; clearTimeout(S.pauseT); if(synthOK) speechSynthesis.cancel(); }
+  if("mediaSession" in navigator) navigator.mediaSession.playbackState = p ? "playing" : "paused";
+}
+function play(){
+  if(!synthOK){ toast("Peramban ini tidak mendukung suara. Gunakan Chrome, Edge, atau Safari."); return; }
+  if(!S.book){ openDlg(); return; }
+  setPlaying(true); speakCurrent(); armSleep();
+}
+function pause(){ setPlaying(false); }
+function toggle(){ S.playing ? pause() : play(); }
+function jump(i){
+  i = Math.max(0, Math.min(S.sents.length - 1, i));
+  S.si = i; save(); mark(true);
+  if(S.playing) speakCurrent();
+}
+
+/* ============ Tampilan buku ============ */
+function renderChapter(){
+  const ch = S.book.chapters[S.ci];
+  S.sents = splitSentences(ch.text);
+  const page = $("page"); page.innerHTML = "";
+  const h = document.createElement("h2"); h.textContent = ch.title; page.appendChild(h);
+  let p = null;
+  S.sents.forEach((s, i) => {
+    if(!p || s.para){ p = document.createElement("p"); page.appendChild(p); }
+    const sp = document.createElement("span"); sp.className = "sent"; sp.textContent = s.t + " "; sp.dataset.i = i; sp.tabIndex = 0;
+    p.appendChild(sp);
+  });
+  $("seek").max = Math.max(0, S.sents.length - 1);
+  renderChapterList();
+}
+let lastNow = -1;
+function mark(scroll){
+  const spans = $("page").querySelectorAll(".sent");
+  spans.forEach((sp, i) => { sp.classList.toggle("done", i < S.si); sp.classList.toggle("now", i === S.si); });
+  const el = spans[S.si];
+  if(el && (scroll || lastNow !== S.si)){ el.scrollIntoView({block: "center", behavior: matchMedia("(prefers-reduced-motion:reduce)").matches ? "auto" : "smooth"}); }
+  lastNow = S.si;
+  $("seek").value = S.si;
+  const total = S.sents.length, left = S.sents.slice(S.si).reduce((n, s) => n + s.t.length, 0);
+  $("posLabel").textContent = total ? `Kalimat ${Math.min(S.si + 1, total)}/${total}` : "–";
+  const mins = Math.ceil(left / 14 / (+S.cfg.rate || 1) / 60); // ±14 karakter per detik pada kecepatan 1×
+  $("timeLabel").textContent = total ? `± ${mins} mnt tersisa di bab` : "";
+}
+function renderChapterList(){
+  const ul = $("chapterList"); ul.innerHTML = "";
+  S.book.chapters.forEach((c, i) => {
+    const li = document.createElement("li"); if(i === S.ci) li.className = "active";
+    const b = document.createElement("button"); b.className = "item"; b.textContent = c.title; b.title = c.title;
+    b.onclick = () => { gotoChapter(i, 0, S.playing); $("side").classList.remove("open"); };
+    li.appendChild(b); ul.appendChild(li);
+  });
+  const act = ul.querySelector(".active"); if(act) act.scrollIntoView({block: "nearest"});
+}
+function gotoChapter(i, si = 0, keepPlaying = false){
+  if(i < 0 || i >= S.book.chapters.length) return;
+  const was = keepPlaying;
+  setPlaying(false);
+  S.ci = i; S.si = si; renderChapter(); save(); lastNow = -1; mark(true);
+  $("reader").scrollTop = si ? $("reader").scrollTop : 0;
+  if(was){ setPlaying(true); speakCurrent(); }
+}
+
+function save(){
+  if(!S.book) return;
+  S.book.progress = {ci: S.ci, si: S.si, at: Date.now()};
+  clearTimeout(save.t);
+  save.t = setTimeout(() => { db.put(S.book).then(renderLibrary).catch(() => {}); }, 400);
+}
+
+async function openBook(book, autoStart){
+  setPlaying(false);
+  S.book = book; store.set("last", book.id);
+  const pr = book.progress || {ci: 0, si: 0};
+  S.ci = Math.min(pr.ci, book.chapters.length - 1); S.si = pr.si;
+  $("empty").hidden = true; $("page").hidden = false;
+  $("bookTitle").textContent = book.title;
+  document.title = book.title + " · Buku Bersuara";
+  renderChapter(); S.si = Math.min(S.si, Math.max(0, S.sents.length - 1)); lastNow = -1; mark(true);
+  renderLibrary();
+  if(pr.ci || pr.si) toast("Melanjutkan dari terakhir dibaca");
+  setupMediaSession();
+}
+
+async function renderLibrary(){
+  let books = []; try{ books = await db.all(); }catch(e){}
+  books.sort((a, b) => ((b.progress || {}).at || b.added) - ((a.progress || {}).at || a.added));
+  const ul = $("library"); ul.innerHTML = "";
+  if(!books.length){ const li = document.createElement("li"); li.innerHTML = '<span class="note" style="padding:8px">Belum ada buku.</span>'; ul.appendChild(li); return; }
+  for(const b of books){
+    const li = document.createElement("li"); if(S.book && b.id === S.book.id) li.className = "active";
+    const wrap = document.createElement("div"); wrap.style.flex = "1"; wrap.style.minWidth = "0";
+    const btn = document.createElement("button"); btn.className = "item"; btn.textContent = b.title; btn.title = b.title; btn.style.width = "100%";
+    btn.onclick = () => { openBook(b); $("side").classList.remove("open"); };
+    const pct = Math.round((((b.progress || {}).ci || 0) / b.chapters.length) * 100);
+    const bar = document.createElement("div"); bar.className = "bar"; bar.innerHTML = `<i style="width:${pct}%"></i>`;
+    wrap.append(btn, bar);
+    const x = document.createElement("button"); x.className = "x"; x.textContent = "✕"; x.setAttribute("aria-label", "Hapus " + b.title);
+    x.onclick = async () => { if(!confirm(`Hapus “${b.title}” dari pustaka?`)) return; await db.del(b.id); if(S.book && S.book.id === b.id){ setPlaying(false); S.book = null; $("page").hidden = true; $("empty").hidden = false; $("chapterList").innerHTML = ""; $("bookTitle").textContent = "Buku Bersuara"; } renderLibrary(); };
+    li.append(wrap, x); ul.appendChild(li);
+  }
+}
+
+function setupMediaSession(){
+  if(!("mediaSession" in navigator) || !S.book) return;
+  navigator.mediaSession.metadata = new MediaMetadata({title: S.book.chapters[S.ci].title, artist: S.book.title});
+  const h = {play, pause, previoustrack: () => gotoChapter(S.ci - 1, 0, S.playing), nexttrack: () => gotoChapter(S.ci + 1, 0, S.playing)};
+  for(const k in h){ try{ navigator.mediaSession.setActionHandler(k, h[k]); }catch(e){} }
+}
+
+/* ============ Timer tidur ============ */
+function armSleep(){
+  clearTimeout(S.sleepT);
+  const m = +S.cfg.sleep; if(!m) return;
+  S.sleepT = setTimeout(() => { pause(); toast("Timer tidur selesai"); }, m * 60000);
+}
+
+/* ============ Dialog & pengaturan ============ */
+function openDlg(){ $("openStatus").textContent = ""; $("openDlg").showModal(); }
+async function handleFile(file){
+  if(!file) return;
+  if(!$("openDlg").open) $("openDlg").showModal();
+  $("openStatus").textContent = "Memproses " + file.name + "…";
+  try{
+    const r = await importFile(file);
+    await addBook(r.title, r.chapters);
+  }catch(e){ $("openStatus").textContent = "Gagal: " + e.message; }
+}
+async function addBook(title, chapters){
+  const book = {id: "b" + Date.now(), title: title || "Tanpa judul", chapters, added: Date.now(), progress: {ci: 0, si: 0, at: Date.now()}};
+  try{ await db.put(book); }catch(e){ toast("Penyimpanan penuh, buku tidak disimpan di pustaka"); }
+  $("openDlg").close(); await openBook(book);
+}
+$("openBtn").onclick = $("openBtn2").onclick = openDlg;
+$("openCancel").onclick = () => $("openDlg").close();
+$("file").onchange = e => handleFile(e.target.files[0]);
+$("pasteGo").onclick = async () => {
+  const t = $("pasteText").value.trim();
+  if(t.length < 20){ $("openStatus").textContent = "Teks terlalu pendek."; return; }
+  const title = $("pasteTitle").value.trim() || "Teks tempelan";
+  await addBook(title, splitChapters(t, title)); $("pasteText").value = "";
+};
+const drop = $("drop");
+["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+document.addEventListener("drop", e => handleFile(e.dataTransfer.files[0]));
+
+function applyCfg(){
+  const c = S.cfg;
+  $("rate").value = c.rate; $("pitch").value = c.pitch; $("vol").value = c.vol; $("pause").value = c.pause; $("fs").value = c.fs;
+  $("sleep").value = c.sleep; $("autoNext").value = c.autoNext; $("lang").value = c.lang;
+  $("rateO").textContent = (+c.rate).toFixed(2) + "×"; $("pitchO").textContent = (+c.pitch).toFixed(2);
+  $("volO").textContent = Math.round(c.vol * 100) + "%"; $("pauseO").textContent = (c.pause / 1000).toFixed(1) + " dtk"; $("fsO").textContent = c.fs + " px";
+  document.documentElement.style.setProperty("--fs", c.fs + "px");
+  fillVoices();
+}
+["rate", "pitch", "vol", "pause", "fs"].forEach(k => $(k).oninput = () => {
+  S.cfg[k] = +$(k).value; store.set("cfg", S.cfg); applyCfg(); if(S.book) mark();
+});
+$("rate").onchange = $("pitch").onchange = $("vol").onchange = () => { if(S.playing) speakCurrent(); };
+$("voice").onchange = () => { S.cfg.voice = $("voice").value; store.set("cfg", S.cfg); if(S.playing) speakCurrent(); };
+$("lang").onchange = () => { S.cfg.lang = $("lang").value; S.cfg.voice = ""; store.set("cfg", S.cfg); applyCfg(); };
+$("sleep").onchange = () => { S.cfg.sleep = +$("sleep").value; store.set("cfg", S.cfg); if(S.playing) armSleep(); };
+$("autoNext").onchange = () => { S.cfg.autoNext = $("autoNext").value; store.set("cfg", S.cfg); };
+$("settingsBtn").onclick = () => $("setDlg").showModal();
+$("setClose").onclick = () => $("setDlg").close();
+$("testVoice").onclick = () => {
+  if(!synthOK) return toast("Peramban tidak mendukung suara");
+  const wasPlaying = S.playing; setPlaying(false);
+  const u = new SpeechSynthesisUtterance(S.cfg.lang === "ar" ? "مرحبا، هذا اختبار الصوت" : S.cfg.lang === "en" ? "Hello, this is a voice test." : "Halo, ini contoh suara pembaca buku.");
+  const v = pickVoice(); if(v){ u.voice = v; u.lang = v.lang; }
+  u.rate = +S.cfg.rate; u.pitch = +S.cfg.pitch; u.volume = +S.cfg.vol; speechSynthesis.speak(u);
+};
+
+/* ============ Kontrol & pintasan ============ */
+$("play").onclick = toggle;
+$("prevS").onclick = () => { if(S.book) jump(S.si - 1); };
+$("nextS").onclick = () => { if(S.book) jump(S.si + 1); };
+$("prevCh").onclick = () => S.book && gotoChapter(S.ci - 1, 0, S.playing);
+$("nextCh").onclick = () => S.book && gotoChapter(S.ci + 1, 0, S.playing);
+$("repeat").onclick = () => { if(S.book){ if(!S.playing) setPlaying(true); speakCurrent(); armSleep(); } };
+$("seek").oninput = () => { if(S.book) jump(+$("seek").value); };
+$("page").addEventListener("click", e => { const sp = e.target.closest(".sent"); if(sp){ jump(+sp.dataset.i); if(!S.playing) play(); } });
+$("page").addEventListener("keydown", e => { if(e.key === "Enter" && e.target.classList.contains("sent")){ jump(+e.target.dataset.i); play(); } });
+document.addEventListener("keydown", e => {
+  if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || document.querySelector("dialog[open]")) return;
+  if(e.key === " " && !/BUTTON/.test(e.target.tagName)){ e.preventDefault(); toggle(); }
+  else if(e.key === "ArrowRight" && S.book) jump(S.si + 1);
+  else if(e.key === "ArrowLeft" && S.book) jump(S.si - 1);
+  else if((e.key === "r" || e.key === "R") && S.book) $("repeat").click();
+});
+$("menuBtn").onclick = () => $("side").classList.toggle("open");
+$("themeBtn").onclick = () => {
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const cur = document.documentElement.dataset.theme || (dark ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next; store.set("theme", next);
+};
+const th = store.get("theme", null); if(th) document.documentElement.dataset.theme = th;
+window.addEventListener("beforeunload", () => { if(synthOK) speechSynthesis.cancel(); });
+
+/* ============ Mulai ============ */
+applyCfg();
+if(!synthOK) toast("Peramban ini tidak mendukung suara (Web Speech API).");
+renderLibrary();
+(async () => { try{ const id = store.get("last", null); if(id){ const b = await db.get(id); if(b) await openBook(b); } }catch(e){} })();
+</script>
+</body>
+</html>
