@@ -18,6 +18,13 @@ Buka `index.html` di Chrome, Edge, atau Safari (tanpa instalasi, tanpa server). 
 - Pustaka tersimpan di peramban (IndexedDB) dan **melanjutkan dari posisi terakhir**.
 - Pintasan: `Spasi` putar/jeda, `←`/`→` kalimat, `R` ulangi.
 
+## Suara natural
+Di **Pengaturan suara → Mesin suara** pilih:
+- **OpenAI** (model `gpt-4o-mini-tts`, suara alloy/nova/coral/dll.) atau layanan lain yang kompatibel lewat kolom *Alamat API*.
+- **ElevenLabs** (`eleven_multilingual_v2`, isi Voice ID).
+
+Isi kunci API sendiri; kunci hanya disimpan di peramban dan dikirim langsung ke penyedia (biaya ditagih penyedia). Tiga kalimat berikutnya diunduh lebih dulu agar pembacaan mulus. Mesin “Bawaan perangkat” tetap gratis dan offline.
+
 ## Catatan
 - Suara memakai Web Speech API bawaan perangkat. Kualitas dan ketersediaan suara bahasa Indonesia tergantung sistem (pasang suara id-ID di pengaturan sistem jika tidak muncul).
 - PDF hasil scan (gambar) tidak bisa dibacakan tanpa OCR.

@@ -146,11 +146,22 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
 
 <dialog id="setDlg">
   <h3>Pengaturan suara</h3>
+  <div class="row two"><label for="engine">Mesin suara</label>
+    <select id="engine"><option value="device">Bawaan perangkat (gratis)</option><option value="openai">OpenAI — natural</option><option value="eleven">ElevenLabs — natural</option></select></div>
+  <div id="cloudBox" hidden>
+    <div class="row two"><label for="apiKey">Kunci API</label><input type="password" id="apiKey" autocomplete="off" placeholder="sk-… / kunci ElevenLabs"></div>
+    <div class="row two"><label for="cVoice">Suara</label><input type="text" id="cVoice" list="cVoiceList"><datalist id="cVoiceList"></datalist></div>
+    <div class="row two"><label for="cModel">Model</label><input type="text" id="cModel"></div>
+    <div class="row two" id="baseRow"><label for="cBase">Alamat API</label><input type="text" id="cBase" placeholder="https://api.openai.com/v1"></div>
+    <p class="note">Kunci disimpan hanya di peramban ini dan dikirim langsung ke penyedia suara (biaya ditagih penyedia). Kalimat berikutnya diunduh lebih dulu agar tidak ada jeda.</p>
+  </div>
+  <div id="deviceBox">
   <div class="row two"><label for="voice">Suara</label><select id="voice"></select></div>
   <div class="row two"><label for="lang">Bahasa</label>
     <select id="lang"><option value="id">Indonesia</option><option value="en">Inggris</option><option value="ar">Arab</option><option value="">Semua</option></select></div>
+  </div>
   <div class="row"><label for="rate">Kecepatan</label><input type="range" id="rate" min="0.5" max="2" step="0.05"><output id="rateO"></output></div>
-  <div class="row"><label for="pitch">Nada</label><input type="range" id="pitch" min="0.5" max="1.5" step="0.05"><output id="pitchO"></output></div>
+  <div class="row" id="pitchRow"><label for="pitch">Nada</label><input type="range" id="pitch" min="0.5" max="1.5" step="0.05"><output id="pitchO"></output></div>
   <div class="row"><label for="vol">Volume</label><input type="range" id="vol" min="0" max="1" step="0.05"><output id="volO"></output></div>
   <div class="row"><label for="pause">Jeda antar kalimat</label><input type="range" id="pause" min="0" max="2000" step="100"><output id="pauseO"></output></div>
   <div class="row"><label for="fs">Ukuran huruf</label><input type="range" id="fs" min="15" max="32" step="1"><output id="fsO"></output></div>
@@ -332,7 +343,7 @@ async function importFile(file){
 const synthOK = "speechSynthesis" in window;
 const S = {
   book: null, ci: 0, si: 0, sents: [], playing: false, token: 0, pauseT: null, sleepT: null, sleepAt: 0,
-  cfg: Object.assign({voice: "", lang: "id", rate: 1, pitch: 1, vol: 1, pause: 300, fs: 19, sleep: 0, autoNext: "1"}, store.get("cfg", {})),
+  cfg: Object.assign({voice: "", lang: "id", rate: 1, pitch: 1, vol: 1, pause: 300, fs: 19, sleep: 0, autoNext: "1", engine: "device", apiKey: "", cVoice: "", cModel: "", cBase: ""}, store.get("cfg", {})),
   voices: []
 };
 
@@ -359,21 +370,60 @@ function pickVoice(){
   return null;
 }
 
+const PRESET = {
+  openai: {voice: "alloy", model: "gpt-4o-mini-tts", base: "https://api.openai.com/v1", voices: ["alloy","ash","ballad","coral","echo","fable","nova","onyx","sage","shimmer","verse"]},
+  eleven: {voice: "21m00Tcm4TlvDq8ikWAM", model: "eleven_multilingual_v2", base: "https://api.elevenlabs.io/v1", voices: ["21m00Tcm4TlvDq8ikWAM","EXAVITQu4vr4xnSDxMU6","pNInz6obpgDQGcFmaJgB","ErXwobaYiN019PkySvjV"]}
+};
+const cloud = {audio: null, cache: new Map()};
+function cloudCfg(){ const e = S.cfg.engine, p = PRESET[e]; return {e, key: S.cfg.apiKey.trim(), voice: S.cfg.cVoice || p.voice, model: S.cfg.cModel || p.model, base: (S.cfg.cBase || p.base).replace(/\/+$/, "")}; }
+function cloudFetch(text){
+  const c = cloudCfg(), k = [c.e, c.voice, c.model, c.base, text].join("|");
+  if(cloud.cache.has(k)) return cloud.cache.get(k);
+  if(!c.key) return Promise.reject(new Error("Kunci API belum diisi (Pengaturan suara)"));
+  const req = c.e === "openai"
+    ? fetch(c.base + "/audio/speech", {method: "POST", headers: {"Authorization": "Bearer " + c.key, "Content-Type": "application/json"}, body: JSON.stringify({model: c.model, voice: c.voice, input: text, response_format: "mp3"})})
+    : fetch(`${c.base}/text-to-speech/${encodeURIComponent(c.voice)}?output_format=mp3_44100_128`, {method: "POST", headers: {"xi-api-key": c.key, "Content-Type": "application/json"}, body: JSON.stringify({text, model_id: c.model})});
+  const pr = req.then(async r => {
+    if(!r.ok){ let m = ""; try{ m = (await r.text()).slice(0, 160); }catch(e){} throw new Error(`${r.status} ${m}`); }
+    return URL.createObjectURL(await r.blob());
+  });
+  cloud.cache.set(k, pr);
+  pr.catch(() => cloud.cache.delete(k));
+  if(cloud.cache.size > 12){ const old = cloud.cache.keys().next().value; cloud.cache.get(old).then(URL.revokeObjectURL, () => {}); cloud.cache.delete(old); }
+  return pr;
+}
+function stopCloud(){ if(cloud.audio){ cloud.audio.onended = cloud.audio.onerror = null; cloud.audio.pause(); cloud.audio = null; } }
+function advance(my){
+  if(my !== S.token || !S.playing) return;
+  S.si++; save(); mark();
+  if(S.si >= S.sents.length) return endOfChapter();
+  S.pauseT = setTimeout(() => { if(my === S.token && S.playing) speakCurrent(); }, +S.cfg.pause + (S.sents[S.si].para ? 250 : 0));
+}
+async function speakCloud(my, s){
+  stopCloud();
+  try{
+    const url = await cloudFetch(s.t);
+    for(let k = 1; k <= 3; k++){ const n = S.sents[S.si + k]; if(n) cloudFetch(n.t).catch(() => {}); }
+    if(my !== S.token) return;
+    const a = cloud.audio = new Audio(url);
+    a.playbackRate = +S.cfg.rate; a.preservesPitch = true; a.volume = +S.cfg.vol;
+    a.onended = () => advance(my);
+    a.onerror = () => { if(my === S.token){ toast("Audio gagal diputar"); setPlaying(false); } };
+    await a.play();
+  }catch(e){ if(my === S.token){ toast("Suara online gagal: " + e.message); setPlaying(false); } }
+}
 function speakCurrent(){
   clearTimeout(S.pauseT);
-  if(!synthOK || !S.book) return;
+  if(!S.book) return;
   const s = S.sents[S.si]; if(!s){ return endOfChapter(); }
+  if(S.cfg.engine !== "device"){ return speakCloud(++S.token, s); }
+  if(!synthOK) return;
   const my = ++S.token;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(s.t);
   const v = pickVoice(); if(v){ u.voice = v; u.lang = v.lang; } else u.lang = S.cfg.lang === "ar" ? "ar-SA" : S.cfg.lang === "en" ? "en-US" : "id-ID";
   u.rate = +S.cfg.rate; u.pitch = +S.cfg.pitch; u.volume = +S.cfg.vol;
-  u.onend = () => {
-    if(my !== S.token || !S.playing) return;
-    S.si++; save(); mark();
-    if(S.si >= S.sents.length) return endOfChapter();
-    S.pauseT = setTimeout(() => { if(my === S.token && S.playing) speakCurrent(); }, +S.cfg.pause + (S.sents[S.si].para ? 250 : 0));
-  };
+  u.onend = () => advance(my);
   u.onerror = e => { if(my !== S.token) return; if(e.error !== "interrupted" && e.error !== "canceled"){ toast("Gagal memutar suara: " + e.error); setPlaying(false); } };
   speechSynthesis.speak(u);
 }
@@ -385,11 +435,11 @@ function setPlaying(p){
   S.playing = p;
   $("play").textContent = p ? "⏸ Jeda" : "▶ Putar";
   $("play").setAttribute("aria-label", p ? "Jeda" : "Putar");
-  if(!p){ S.token++; clearTimeout(S.pauseT); if(synthOK) speechSynthesis.cancel(); }
+  if(!p){ S.token++; clearTimeout(S.pauseT); stopCloud(); if(synthOK) speechSynthesis.cancel(); }
   if("mediaSession" in navigator) navigator.mediaSession.playbackState = p ? "playing" : "paused";
 }
 function play(){
-  if(!synthOK){ toast("Peramban ini tidak mendukung suara. Gunakan Chrome, Edge, atau Safari."); return; }
+  if(S.cfg.engine === "device" && !synthOK){ toast("Peramban ini tidak mendukung suara. Gunakan Chrome, Edge, atau Safari."); return; }
   if(!S.book){ openDlg(); return; }
   setPlaying(true); speakCurrent(); armSleep();
 }
@@ -539,12 +589,24 @@ function applyCfg(){
   $("rateO").textContent = (+c.rate).toFixed(2) + "×"; $("pitchO").textContent = (+c.pitch).toFixed(2);
   $("volO").textContent = Math.round(c.vol * 100) + "%"; $("pauseO").textContent = (c.pause / 1000).toFixed(1) + " dtk"; $("fsO").textContent = c.fs + " px";
   document.documentElement.style.setProperty("--fs", c.fs + "px");
+  const cl = c.engine !== "device"; $("engine").value = c.engine;
+  $("cloudBox").hidden = !cl; $("deviceBox").hidden = cl; $("pitchRow").hidden = cl; $("baseRow").hidden = c.engine !== "openai";
+  if(cl){
+    const p = PRESET[c.engine];
+    $("apiKey").value = c.apiKey; $("cVoice").value = c.cVoice || p.voice; $("cModel").value = c.cModel || p.model; $("cBase").value = c.cBase;
+    $("cBase").placeholder = p.base;
+    $("cVoiceList").innerHTML = p.voices.map(v => `<option value="${v}">`).join("");
+  }
   fillVoices();
 }
 ["rate", "pitch", "vol", "pause", "fs"].forEach(k => $(k).oninput = () => {
   S.cfg[k] = +$(k).value; store.set("cfg", S.cfg); applyCfg(); if(S.book) mark();
+  if(cloud.audio){ cloud.audio.playbackRate = +S.cfg.rate; cloud.audio.volume = +S.cfg.vol; }
 });
-$("rate").onchange = $("pitch").onchange = $("vol").onchange = () => { if(S.playing) speakCurrent(); };
+$("engine").onchange = () => { S.cfg.engine = $("engine").value; S.cfg.cVoice = S.cfg.cModel = S.cfg.cBase = ""; store.set("cfg", S.cfg); applyCfg(); if(S.playing) speakCurrent(); };
+[["apiKey","apiKey"],["cVoice","cVoice"],["cModel","cModel"],["cBase","cBase"]].forEach(([id,k]) => $(id).onchange = () => { S.cfg[k] = $(id).value.trim(); store.set("cfg", S.cfg); if(S.playing) speakCurrent(); });
+$("pitch").onchange = () => { if(S.playing && S.cfg.engine === "device") speakCurrent(); };
+$("rate").onchange = $("vol").onchange = () => { if(S.playing && S.cfg.engine === "device") speakCurrent(); };
 $("voice").onchange = () => { S.cfg.voice = $("voice").value; store.set("cfg", S.cfg); if(S.playing) speakCurrent(); };
 $("lang").onchange = () => { S.cfg.lang = $("lang").value; S.cfg.voice = ""; store.set("cfg", S.cfg); applyCfg(); };
 $("sleep").onchange = () => { S.cfg.sleep = +$("sleep").value; store.set("cfg", S.cfg); if(S.playing) armSleep(); };
@@ -552,6 +614,10 @@ $("autoNext").onchange = () => { S.cfg.autoNext = $("autoNext").value; store.set
 $("settingsBtn").onclick = () => $("setDlg").showModal();
 $("setClose").onclick = () => $("setDlg").close();
 $("testVoice").onclick = () => {
+  if(S.cfg.engine !== "device"){
+    const wasP = S.playing; setPlaying(false);
+    return cloudFetch("Halo, ini contoh suara pembaca buku.").then(u => { const a = new Audio(u); a.playbackRate = +S.cfg.rate; a.volume = +S.cfg.vol; a.play(); }).catch(e => toast("Gagal: " + e.message));
+  }
   if(!synthOK) return toast("Peramban tidak mendukung suara");
   const wasPlaying = S.playing; setPlaying(false);
   const u = new SpeechSynthesisUtterance(S.cfg.lang === "ar" ? "مرحبا، هذا اختبار الصوت" : S.cfg.lang === "en" ? "Hello, this is a voice test." : "Halo, ini contoh suara pembaca buku.");
