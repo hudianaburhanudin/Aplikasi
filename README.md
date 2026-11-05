@@ -2,6 +2,17 @@
 
 Aplikasi web untuk mengubah buku menjadi suara dan mendengarkannya kalimat demi kalimat.
 
+## Memakai aplikasi
+**Cara tercepat (di komputer):** unduh folder ini, lalu buka `index.html` di Chrome/Edge/Safari.
+
+**Agar bisa diinstal di HP/komputer (PWA) dan dibuka dari mana saja:** publikasikan lewat GitHub Pages.
+1. Gabungkan (merge) branch ini ke `main`.
+2. Di GitHub: *Settings → Pages → Build and deployment → Source: GitHub Actions*.
+3. Workflow `.github/workflows/pages.yml` akan menerbitkan aplikasi di `https://<pengguna>.github.io/<repo>/`.
+4. Buka alamat itu di Chrome/Edge lalu pilih **Instal aplikasi** / **Tambahkan ke layar utama**. Setelah terpasang, aplikasi juga bisa dibuka tanpa internet (suara bawaan perangkat; suara natural dan terjemahan online tetap butuh internet).
+
+Alternatif lokal: `python3 -m http.server` lalu buka `http://localhost:8000`.
+
 ## Cara pakai
 Buka `index.html` di Chrome, Edge, atau Safari (tanpa instalasi, tanpa server). Atau jalankan `python3 -m http.server` lalu buka `http://localhost:8000`.
 
@@ -15,6 +26,7 @@ Buka `index.html` di Chrome, Edge, atau Safari (tanpa instalasi, tanpa server). 
 - Pembacaan per kalimat dengan sorotan, bilah posisi, perkiraan sisa waktu.
 - Kontrol: putar/jeda, kalimat sebelumnya/berikutnya, ulangi kalimat, bab sebelumnya/berikutnya.
 - Pengaturan: pilihan suara & bahasa (Indonesia, Inggris, Arab), kecepatan, nada, volume, jeda antar kalimat, ukuran huruf, timer tidur, lanjut bab otomatis, tema gelap/terang.
+- Terjemahan Arab disimpan per buku (tidak diterjemahkan ulang saat dibuka lagi); tombol **Ekspor** menyimpan teks Arab + terjemahan ke file .txt.
 - Pustaka tersimpan di peramban (IndexedDB) dan **melanjutkan dari posisi terakhir**.
 - Pintasan: `Spasi` putar/jeda, `←`/`→` kalimat, `R` ulangi.
 

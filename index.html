@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Buku Bersuara</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#1f6f5c">
 <meta name="description" content="Ubah buku (TXT, PDF, EPUB) menjadi suara dan dengarkan kalimat demi kalimat.">
 <style>
 :root{
@@ -96,6 +100,7 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
   <button class="btn" id="menuBtn" aria-label="Buka daftar buku dan bab">☰</button>
   <h1 id="bookTitle">Buku Bersuara</h1>
   <button class="btn" id="openBtn">Buka buku</button>
+  <button class="btn" id="exportBtn" title="Simpan teks (dan terjemahan) buku ini ke file">Ekspor</button>
   <button class="btn" id="settingsBtn">Pengaturan suara</button>
   <button class="btn" id="themeBtn" aria-label="Ganti tema">◐</button>
 </header>
@@ -478,7 +483,7 @@ async function doTranslate(text){
 function translate(text){
   if(trCache.has(text)) return Promise.resolve(trCache.get(text));
   if(trP.has(text)) return trP.get(text);
-  const pr = doTranslate(text).then(t => { trCache.set(text, t); trP.delete(text); return t; }, e => { trP.delete(text); throw e; });
+  const pr = doTranslate(text).then(t => { trCache.set(text, t); trP.delete(text); if(S.book){ (S.book.tr = S.book.tr || {})[text] = t; save(); } return t; }, e => { trP.delete(text); throw e; });
   trP.set(text, pr); return pr;
 }
 function showTr(i, t){ const el = $("page").querySelector(`.tr[data-i="${i}"]`); if(el) el.textContent = t; }
@@ -596,6 +601,7 @@ function save(){
 async function openBook(book, autoStart){
   setPlaying(false);
   S.book = book; store.set("last", book.id);
+  trCache.clear(); Object.entries(book.tr || {}).forEach(([k, v]) => trCache.set(k, v));
   const pr = book.progress || {ci: 0, si: 0};
   S.ci = Math.min(pr.ci, book.chapters.length - 1); S.si = pr.si;
   $("empty").hidden = true; $("page").hidden = false;
@@ -700,6 +706,19 @@ function applyCfg(){
 $("arPart").onchange = () => { S.cfg.arPart = $("arPart").value; store.set("cfg", S.cfg); if(S.playing && S.book && S.book.mode === "ar") speakCurrent(); };
 $("trEngine").onchange = () => { S.cfg.trEngine = $("trEngine").value; S.cfg.trModel = S.cfg.trBase = ""; store.set("cfg", S.cfg); applyCfg(); };
 [["trKey","trKey"],["trModel","trModel"],["trBase","trBase"]].forEach(([id,k]) => $(id).onchange = () => { S.cfg[k] = $(id).value.trim(); store.set("cfg", S.cfg); trCache.clear(); });
+$("exportBtn").onclick = () => {
+  if(!S.book) return toast("Buka buku dulu");
+  const ar = S.book.mode === "ar", out = [S.book.title, ""];
+  S.book.chapters.forEach(c => {
+    out.push("## " + c.title, "");
+    if(ar) splitSentences(c.text, true).forEach(x => { out.push(x.t); const t = trCache.get(x.t); if(t) out.push("→ " + t); out.push(""); });
+    else out.push(c.text.trim(), "");
+  });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([out.join("\n")], {type: "text/plain;charset=utf-8"}));
+  a.download = S.book.title.replace(/[\\/:*?"<>|]/g, "_") + (ar ? " (Arab-Indonesia)" : "") + ".txt";
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
 $("arBtn").onclick = () => {
   if(!S.book) return toast("Buka buku dulu");
   const was = S.playing; setPlaying(false);
@@ -757,6 +776,7 @@ const th = store.get("theme", null); if(th) document.documentElement.dataset.the
 window.addEventListener("beforeunload", () => { if(synthOK) speechSynthesis.cancel(); });
 
 /* ============ Mulai ============ */
+if("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
 applyCfg();
 if(!synthOK) toast("Peramban ini tidak mendukung suara (Web Speech API).");
 renderLibrary();
