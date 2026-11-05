@@ -52,6 +52,9 @@ aside h2:first-child{margin-top:0}
 .sent:hover{background:var(--bg)}
 .sent.done{color:var(--done)}
 .sent.now{background:var(--hl);color:var(--ink);box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.page.ar .seg{margin:0 0 1.2em;padding-bottom:.9em;border-bottom:1px solid var(--line)}
+.page.ar .sent.ar{display:block;font-size:1.35em;line-height:2.1;text-align:right;font-family:"Amiri","Noto Naskh Arabic","Traditional Arabic","Geeza Pro",serif}
+.page.ar .tr{font-size:.92em;color:var(--muted);font-style:italic;min-height:1.2em;margin-top:.2em}
 .empty{max-width:560px;margin:8vh auto;text-align:center;color:var(--muted)}
 .empty h2{color:var(--ink)}
 .drop{border:2px dashed var(--line);border-radius:12px;padding:28px 16px;margin:18px 0}
@@ -128,6 +131,7 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
     <button class="btn" id="nextS" title="Kalimat berikutnya (→)" aria-label="Kalimat berikutnya">▶</button>
     <button class="btn" id="nextCh" title="Bab berikutnya" aria-label="Bab berikutnya">⏭</button>
     <button class="btn" id="repeat" title="Ulangi kalimat ini (R)">Ulangi kalimat</button>
+    <button class="btn" id="arBtn" title="Buku Arab: baca teks asli per titik/koma, lalu terjemahan Indonesia">Mode Arab: Mati</button>
   </div>
 </footer>
 
@@ -165,6 +169,17 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
   <div class="row"><label for="vol">Volume</label><input type="range" id="vol" min="0" max="1" step="0.05"><output id="volO"></output></div>
   <div class="row"><label for="pause">Jeda antar kalimat</label><input type="range" id="pause" min="0" max="2000" step="100"><output id="pauseO"></output></div>
   <div class="row"><label for="fs">Ukuran huruf</label><input type="range" id="fs" min="15" max="32" step="1"><output id="fsO"></output></div>
+  <h4 style="margin:14px 0 4px">Mode Arab → Indonesia</h4>
+  <div class="row two"><label for="arPart">Yang dibacakan</label>
+    <select id="arPart"><option value="both">Teks Arab, lalu terjemahan</option><option value="ar">Teks Arab saja</option><option value="id">Terjemahan saja</option></select></div>
+  <div class="row two"><label for="trEngine">Penerjemah</label>
+    <select id="trEngine"><option value="mymemory">MyMemory (gratis, terbatas)</option><option value="claude">Claude (kunci Anthropic)</option><option value="openai">OpenAI (kunci OpenAI)</option></select></div>
+  <div id="trBox" hidden>
+    <div class="row two"><label for="trKey">Kunci API</label><input type="password" id="trKey" autocomplete="off"></div>
+    <div class="row two"><label for="trModel">Model</label><input type="text" id="trModel"></div>
+    <div class="row two" id="trBaseRow"><label for="trBase">Alamat API</label><input type="text" id="trBase" placeholder="https://api.openai.com/v1"></div>
+  </div>
+  <p class="note">Terjemahan LLM jauh lebih baik untuk kitab dan teks sastra. MyMemory gratis tanpa kunci tetapi dibatasi kuota harian dan mutunya sederhana.</p>
   <div class="row two"><label for="sleep">Timer tidur</label>
     <select id="sleep"><option value="0">Mati</option><option value="10">10 menit</option><option value="20">20 menit</option><option value="30">30 menit</option><option value="60">60 menit</option></select></div>
   <div class="row two"><label for="autoNext">Lanjut bab</label>
@@ -223,28 +238,39 @@ const db = {
 
 /* ============ Pemecah teks ============ */
 const PROTECT = /\b(dr|Dr|drs|Drs|Prof|prof|Ir|Hj|Hr|KH|Kh|St|Mr|Mrs|Ms|No|no|hlm|dll|dsb|dst|yg|dg|tgl|Jl|vs|Bpk|Ibu|Sdr|Tn|Ny|a\.n|u\.p|s\.d|ra|as|saw|swt|Q\.S|QS)\./g;
-function splitSentences(text){
-  const out = [];
+function chunkWords(str, max){
+  const out = []; let cur = "";
+  for(const w of str.split(" ")){ if(cur && (cur + " " + w).length > max){ out.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; }
+  if(cur) out.push(cur); return out;
+}
+// fine=true: potong juga di koma/titik dua/titik koma (mode Arab, potongan pendek)
+function splitSentences(text, fine){
+  const out = [], MAX = fine ? 200 : 320;
   for(const para of text.split(/\n{1,}/)){
     const p = para.replace(/\s+/g, " ").trim();
     if(!p) continue;
-    const safe = p.replace(PROTECT, m => m.slice(0, -1) + "\u0001");
-    const parts = safe.split(/(?<=[.!?…؟。])["”’')\]]*\s+(?=[^\s])/);
+    const safe = fine ? p : p.replace(PROTECT, m => m.slice(0, -1) + "\u0001");
+    let parts = safe.split(fine ? /(?<=[.!?…؟。،؛,;:])["”’')\]»]*\s+(?=\S)/ : /(?<=[.!?…؟。])["”’')\]]*\s+(?=[^\s])/);
+    if(fine){ // gabungkan potongan yang terlalu pendek dengan potongan berikutnya
+      const m = []; let carry = "";
+      for(const x of parts){ const t = (carry ? carry + " " : "") + x; if(t.replace(/[^\p{L}]/gu, "").length < 8){ carry = t; } else { m.push(t); carry = ""; } }
+      if(carry) m.length ? m[m.length - 1] += " " + carry : m.push(carry);
+      parts = m;
+    }
     const sents = [];
     for(let part of parts){
       part = part.replace(/\u0001/g, ".").trim();
       if(!part) continue;
-      if(part.length > 320){
-        // kalimat sangat panjang: potong di tanda baca agar tidak terputus oleh mesin suara
-        const bits = part.split(/(?<=[,;:])\s+/);
+      if(part.length > MAX){
+        const bits = part.split(/(?<=[,;:،؛])\s+/);
         let cur = "";
         for(const b of bits){
-          if((cur + " " + b).length > 260 && cur){ sents.push(cur.trim()); cur = b; } else cur += " " + b;
+          if((cur + " " + b).length > MAX - 60 && cur){ sents.push(cur.trim()); cur = b; } else cur += " " + b;
         }
         if(cur.trim()) sents.push(cur.trim());
       } else sents.push(part);
     }
-    sents.forEach((s, i) => out.push({t: s, para: i === 0}));
+    sents.flatMap(x => x.length > MAX ? chunkWords(x, MAX - 60) : [x]).forEach((x, i) => out.push({t: x, para: i === 0}));
   }
   return out;
 }
@@ -343,7 +369,7 @@ async function importFile(file){
 const synthOK = "speechSynthesis" in window;
 const S = {
   book: null, ci: 0, si: 0, sents: [], playing: false, token: 0, pauseT: null, sleepT: null, sleepAt: 0,
-  cfg: Object.assign({voice: "", lang: "id", rate: 1, pitch: 1, vol: 1, pause: 300, fs: 19, sleep: 0, autoNext: "1", engine: "device", apiKey: "", cVoice: "", cModel: "", cBase: ""}, store.get("cfg", {})),
+  cfg: Object.assign({voice: "", lang: "id", rate: 1, pitch: 1, vol: 1, pause: 300, fs: 19, sleep: 0, autoNext: "1", engine: "device", apiKey: "", cVoice: "", cModel: "", cBase: "", arPart: "both", trEngine: "mymemory", trKey: "", trModel: "", trBase: ""}, store.get("cfg", {})),
   voices: []
 };
 
@@ -364,9 +390,9 @@ function fillVoices(){
 }
 if(synthOK){ loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
 
-function pickVoice(){
-  if(S.cfg.voice){ const v = S.voices.find(v => v.name === S.cfg.voice); if(v) return v; }
-  if(S.cfg.lang){ return S.voices.find(v => v.lang.toLowerCase().startsWith(S.cfg.lang) && v.localService) || S.voices.find(v => v.lang.toLowerCase().startsWith(S.cfg.lang)) || null; }
+function pickVoice(lang = S.cfg.lang){
+  if(lang === S.cfg.lang && S.cfg.voice){ const v = S.voices.find(v => v.name === S.cfg.voice); if(v) return v; }
+  if(lang){ return S.voices.find(v => v.lang.toLowerCase().startsWith(lang) && v.localService) || S.voices.find(v => v.lang.toLowerCase().startsWith(lang)) || null; }
   return null;
 }
 
@@ -399,33 +425,87 @@ function advance(my){
   if(S.si >= S.sents.length) return endOfChapter();
   S.pauseT = setTimeout(() => { if(my === S.token && S.playing) speakCurrent(); }, +S.cfg.pause + (S.sents[S.si].para ? 250 : 0));
 }
-async function speakCloud(my, s){
+async function cloudSpeak(my, text, done){
   stopCloud();
   try{
-    const url = await cloudFetch(s.t);
-    for(let k = 1; k <= 3; k++){ const n = S.sents[S.si + k]; if(n) cloudFetch(n.t).catch(() => {}); }
+    const url = await cloudFetch(text);
+    if(S.book && S.book.mode !== "ar") for(let k = 1; k <= 3; k++){ const n = S.sents[S.si + k]; if(n) cloudFetch(n.t).catch(() => {}); }
     if(my !== S.token) return;
     const a = cloud.audio = new Audio(url);
     a.playbackRate = +S.cfg.rate; a.preservesPitch = true; a.volume = +S.cfg.vol;
-    a.onended = () => advance(my);
+    a.onended = () => { if(my === S.token && S.playing) done(); };
     a.onerror = () => { if(my === S.token){ toast("Audio gagal diputar"); setPlaying(false); } };
     await a.play();
   }catch(e){ if(my === S.token){ toast("Suara online gagal: " + e.message); setPlaying(false); } }
 }
+function utter(text, lang, my, done){
+  if(S.cfg.engine !== "device") return cloudSpeak(my, text, done);
+  const u = new SpeechSynthesisUtterance(text);
+  const v = pickVoice(lang); if(v){ u.voice = v; u.lang = v.lang; } else u.lang = {ar: "ar-SA", en: "en-US"}[lang] || "id-ID";
+  u.rate = +S.cfg.rate; u.pitch = +S.cfg.pitch; u.volume = +S.cfg.vol;
+  u.onend = () => { if(my === S.token && S.playing) done(); };
+  u.onerror = e => { if(my !== S.token) return; if(e.error !== "interrupted" && e.error !== "canceled"){ toast("Gagal memutar suara: " + e.error); setPlaying(false); } };
+  speechSynthesis.speak(u);
+}
+
+/* ---- Terjemahan Arab → Indonesia ---- */
+const trCache = new Map(), trP = new Map();
+const TR_PRESET = {openai: {model: "gpt-4o-mini", base: "https://api.openai.com/v1"}, claude: {model: "claude-haiku-5-5"}};
+const TR_SYS = "Anda penerjemah teks Arab (termasuk kitab klasik dan teks keagamaan) ke bahasa Indonesia. Terjemahkan potongan teks berikut secara akurat, jelas, dan ringkas; pertahankan istilah syariat yang lazim dipakai. Keluarkan hanya terjemahannya tanpa catatan.";
+const decodeHtml = t => { const x = document.createElement("textarea"); x.innerHTML = t; return x.value; };
+async function doTranslate(text){
+  const e = S.cfg.trEngine, key = S.cfg.trKey.trim();
+  if(e === "mymemory"){
+    const r = await fetch("https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text) + "&langpair=ar|id");
+    const j = await r.json();
+    if(+j.responseStatus !== 200) throw new Error(j.responseDetails || ("MyMemory " + j.responseStatus));
+    return decodeHtml(j.responseData.translatedText);
+  }
+  if(!key) throw new Error("Kunci API terjemahan belum diisi (Pengaturan suara)");
+  if(e === "openai"){
+    const base = (S.cfg.trBase || TR_PRESET.openai.base).replace(/\/+$/, "");
+    const r = await fetch(base + "/chat/completions", {method: "POST", headers: {"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+      body: JSON.stringify({model: S.cfg.trModel || TR_PRESET.openai.model, temperature: 0.2, messages: [{role: "system", content: TR_SYS}, {role: "user", content: text}]})});
+    if(!r.ok) throw new Error(r.status + " " + (await r.text()).slice(0, 140));
+    return (await r.json()).choices[0].message.content.trim();
+  }
+  const r = await fetch("https://api.anthropic.com/v1/messages", {method: "POST",
+    headers: {"x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true", "content-type": "application/json"},
+    body: JSON.stringify({model: S.cfg.trModel || TR_PRESET.claude.model, max_tokens: 800, system: TR_SYS, messages: [{role: "user", content: text}]})});
+  if(!r.ok) throw new Error(r.status + " " + (await r.text()).slice(0, 140));
+  return (await r.json()).content.map(c => c.text || "").join("").trim();
+}
+function translate(text){
+  if(trCache.has(text)) return Promise.resolve(trCache.get(text));
+  if(trP.has(text)) return trP.get(text);
+  const pr = doTranslate(text).then(t => { trCache.set(text, t); trP.delete(text); return t; }, e => { trP.delete(text); throw e; });
+  trP.set(text, pr); return pr;
+}
+function showTr(i, t){ const el = $("page").querySelector(`.tr[data-i="${i}"]`); if(el) el.textContent = t; }
+
+function speakBilingual(my, s){
+  const base = S.si, part = S.cfg.arPart;
+  if(part !== "ar") for(let k = 0; k <= 3; k++){ const n = S.sents[base + k]; if(n) translate(n.t).then(t => showTr(base + k, t), () => {}); }
+  if(S.cfg.engine !== "device") for(let k = 1; k <= 2; k++){ const n = S.sents[base + k]; if(n && part !== "id") cloudFetch(n.t).catch(() => {}); }
+  const readId = async () => {
+    if(part === "ar") return advance(my);
+    try{
+      const tr = await translate(s.t); if(my !== S.token) return;
+      showTr(base, tr); utter(tr, "id", my, () => advance(my));
+    }catch(e){ if(my === S.token){ toast("Terjemahan gagal: " + e.message); setPlaying(false); } }
+  };
+  if(part === "id") readId(); else utter(s.t, "ar", my, () => { S.pauseT = setTimeout(() => { if(my === S.token && S.playing) readId(); }, 250); });
+}
+
 function speakCurrent(){
   clearTimeout(S.pauseT);
   if(!S.book) return;
-  const s = S.sents[S.si]; if(!s){ return endOfChapter(); }
-  if(S.cfg.engine !== "device"){ return speakCloud(++S.token, s); }
-  if(!synthOK) return;
+  const s = S.sents[S.si]; if(!s) return endOfChapter();
+  if(S.cfg.engine === "device" && !synthOK) return;
   const my = ++S.token;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(s.t);
-  const v = pickVoice(); if(v){ u.voice = v; u.lang = v.lang; } else u.lang = S.cfg.lang === "ar" ? "ar-SA" : S.cfg.lang === "en" ? "en-US" : "id-ID";
-  u.rate = +S.cfg.rate; u.pitch = +S.cfg.pitch; u.volume = +S.cfg.vol;
-  u.onend = () => advance(my);
-  u.onerror = e => { if(my !== S.token) return; if(e.error !== "interrupted" && e.error !== "canceled"){ toast("Gagal memutar suara: " + e.error); setPlaying(false); } };
-  speechSynthesis.speak(u);
+  stopCloud(); if(synthOK) speechSynthesis.cancel();
+  if(S.book.mode === "ar") return speakBilingual(my, s);
+  utter(s.t, S.cfg.lang || "id", my, () => advance(my));
 }
 function endOfChapter(){
   if(S.cfg.autoNext === "1" && S.ci + 1 < S.book.chapters.length){ gotoChapter(S.ci + 1, 0, true); }
@@ -453,17 +533,25 @@ function jump(i){
 
 /* ============ Tampilan buku ============ */
 function renderChapter(){
-  const ch = S.book.chapters[S.ci];
-  S.sents = splitSentences(ch.text);
-  const page = $("page"); page.innerHTML = "";
+  const ch = S.book.chapters[S.ci], ar = S.book.mode === "ar";
+  S.sents = splitSentences(ch.text, ar);
+  const page = $("page"); page.innerHTML = ""; page.className = "page" + (ar ? " ar" : "");
   const h = document.createElement("h2"); h.textContent = ch.title; page.appendChild(h);
   let p = null;
   S.sents.forEach((s, i) => {
-    if(!p || s.para){ p = document.createElement("p"); page.appendChild(p); }
-    const sp = document.createElement("span"); sp.className = "sent"; sp.textContent = s.t + " "; sp.dataset.i = i; sp.tabIndex = 0;
-    p.appendChild(sp);
+    const sp = document.createElement("span"); sp.className = "sent"; sp.dataset.i = i; sp.tabIndex = 0;
+    if(ar){
+      const d = document.createElement("div"); d.className = "seg";
+      sp.textContent = s.t; sp.className += " ar"; sp.lang = "ar"; sp.dir = "rtl";
+      const tr = document.createElement("div"); tr.className = "tr"; tr.dataset.i = i; tr.textContent = trCache.get(s.t) || "";
+      d.append(sp, tr); page.appendChild(d);
+    } else {
+      if(!p || s.para){ p = document.createElement("p"); page.appendChild(p); }
+      sp.textContent = s.t + " "; p.appendChild(sp);
+    }
   });
   $("seek").max = Math.max(0, S.sents.length - 1);
+  $("arBtn").textContent = "Mode Arab: " + (ar ? "Aktif" : "Mati");
   renderChapterList();
 }
 let lastNow = -1;
@@ -564,9 +652,12 @@ async function handleFile(file){
   }catch(e){ $("openStatus").textContent = "Gagal: " + e.message; }
 }
 async function addBook(title, chapters){
-  const book = {id: "b" + Date.now(), title: title || "Tanpa judul", chapters, added: Date.now(), progress: {ci: 0, si: 0, at: Date.now()}};
+  const sample = chapters.slice(0, 3).map(c => c.text).join(" ").slice(0, 3000);
+  const arRatio = (sample.match(/[\u0600-\u06FF]/g) || []).length / Math.max(1, (sample.match(/\p{L}/gu) || []).length);
+  const book = {id: "b" + Date.now(), mode: arRatio > 0.5 ? "ar" : "", title: title || "Tanpa judul", chapters, added: Date.now(), progress: {ci: 0, si: 0, at: Date.now()}};
   try{ await db.put(book); }catch(e){ toast("Penyimpanan penuh, buku tidak disimpan di pustaka"); }
   $("openDlg").close(); await openBook(book);
+  if(book.mode === "ar") toast("Buku Arab terdeteksi: mode Arab → Indonesia aktif");
 }
 $("openBtn").onclick = $("openBtn2").onclick = openDlg;
 $("openCancel").onclick = () => $("openDlg").close();
@@ -597,12 +688,25 @@ function applyCfg(){
     $("cBase").placeholder = p.base;
     $("cVoiceList").innerHTML = p.voices.map(v => `<option value="${v}">`).join("");
   }
+  $("arPart").value = c.arPart; $("trEngine").value = c.trEngine;
+  const lm = c.trEngine !== "mymemory"; $("trBox").hidden = !lm; $("trBaseRow").hidden = c.trEngine !== "openai";
+  if(lm){ $("trKey").value = c.trKey; $("trModel").value = c.trModel; $("trModel").placeholder = TR_PRESET[c.trEngine].model; $("trBase").value = c.trBase; }
   fillVoices();
 }
 ["rate", "pitch", "vol", "pause", "fs"].forEach(k => $(k).oninput = () => {
   S.cfg[k] = +$(k).value; store.set("cfg", S.cfg); applyCfg(); if(S.book) mark();
   if(cloud.audio){ cloud.audio.playbackRate = +S.cfg.rate; cloud.audio.volume = +S.cfg.vol; }
 });
+$("arPart").onchange = () => { S.cfg.arPart = $("arPart").value; store.set("cfg", S.cfg); if(S.playing && S.book && S.book.mode === "ar") speakCurrent(); };
+$("trEngine").onchange = () => { S.cfg.trEngine = $("trEngine").value; S.cfg.trModel = S.cfg.trBase = ""; store.set("cfg", S.cfg); applyCfg(); };
+[["trKey","trKey"],["trModel","trModel"],["trBase","trBase"]].forEach(([id,k]) => $(id).onchange = () => { S.cfg[k] = $(id).value.trim(); store.set("cfg", S.cfg); trCache.clear(); });
+$("arBtn").onclick = () => {
+  if(!S.book) return toast("Buka buku dulu");
+  const was = S.playing; setPlaying(false);
+  S.book.mode = S.book.mode === "ar" ? "" : "ar"; S.si = 0; save(); renderChapter(); lastNow = -1; mark(true);
+  if(S.book.mode === "ar" && S.cfg.trEngine !== "mymemory" && !S.cfg.trKey) toast("Isi kunci API penerjemah di Pengaturan suara");
+  if(was){ setPlaying(true); speakCurrent(); }
+};
 $("engine").onchange = () => { S.cfg.engine = $("engine").value; S.cfg.cVoice = S.cfg.cModel = S.cfg.cBase = ""; store.set("cfg", S.cfg); applyCfg(); if(S.playing) speakCurrent(); };
 [["apiKey","apiKey"],["cVoice","cVoice"],["cModel","cModel"],["cBase","cBase"]].forEach(([id,k]) => $(id).onchange = () => { S.cfg[k] = $(id).value.trim(); store.set("cfg", S.cfg); if(S.playing) speakCurrent(); });
 $("pitch").onchange = () => { if(S.playing && S.cfg.engine === "device") speakCurrent(); };

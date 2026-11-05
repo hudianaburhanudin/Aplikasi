@@ -25,6 +25,11 @@ Di **Pengaturan suara → Mesin suara** pilih:
 
 Isi kunci API sendiri; kunci hanya disimpan di peramban dan dikirim langsung ke penyedia (biaya ditagih penyedia). Tiga kalimat berikutnya diunduh lebih dulu agar pembacaan mulus. Mesin “Bawaan perangkat” tetap gratis dan offline.
 
+## Mode Arab → Indonesia
+Untuk buku berbahasa Arab (terdeteksi otomatis, atau tombol **Mode Arab**): teks dipotong di setiap titik, koma, titik dua, dan titik koma. Tiap potongan dibacakan dalam bahasa Arab asli, lalu diterjemahkan dan dibacakan dalam bahasa Indonesia. Teks Arab dan terjemahannya tampil berdampingan, dan terjemahan berikutnya disiapkan lebih dulu.
+
+Penerjemah (Pengaturan suara): **MyMemory** (gratis, kuota harian terbatas), **Claude** (kunci Anthropic), atau **OpenAI**. Untuk kitab/teks keagamaan, pakai Claude atau OpenAI agar mutunya baik. Pilihan “Yang dibacakan”: Arab+terjemahan, Arab saja, atau terjemahan saja. Suara Arab bawaan perangkat harus terpasang (ar-SA); mesin suara natural otomatis mengenali Arab.
+
 ## Catatan
 - Suara memakai Web Speech API bawaan perangkat. Kualitas dan ketersediaan suara bahasa Indonesia tergantung sistem (pasang suara id-ID di pengaturan sistem jika tidak muncul).
 - PDF hasil scan (gambar) tidak bisa dibacakan tanpa OCR.
