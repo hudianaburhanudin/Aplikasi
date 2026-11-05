@@ -13,6 +13,15 @@ Aplikasi web untuk mengubah buku menjadi suara dan mendengarkannya kalimat demi 
 
 Alternatif lokal: `python3 -m http.server` lalu buka `http://localhost:8000`.
 
+## Instal di iPhone / iPad
+Aplikasi ini PWA, jadi dipasang lewat Safari (bukan App Store) dan memerlukan alamat **https** (file lokal tidak bisa dipasang).
+1. Terbitkan aplikasi: cara termudah, buka <https://app.netlify.com/drop> lalu seret folder hasil ekstrak ZIP ini; Anda mendapat alamat https. Alternatif: GitHub Pages (lihat di atas).
+2. Buka alamat itu di **Safari** pada iPhone (iOS/iPadOS **16.4 atau lebih baru**).
+3. Ketuk **Bagikan** (kotak berpanah) → **Tambahkan ke Layar Utama** → **Tambah**.
+4. Buka dari ikon di layar utama: tampil layar penuh seperti aplikasi biasa.
+
+Catatan iOS: pembacaan hanya dimulai dari ketukan tombol **Putar**; suara bawaan (Siri/Premium) bisa diunduh di *Pengaturan → Aksesibilitas → Konten Lisan → Suara*; dan suara bawaan berhenti saat layar terkunci, sedangkan mesin suara natural (OpenAI/ElevenLabs) tetap berjalan di latar belakang.
+
 ## Cara pakai
 Buka `index.html` di Chrome, Edge, atau Safari (tanpa instalasi, tanpa server). Atau jalankan `python3 -m http.server` lalu buka `http://localhost:8000`.
 

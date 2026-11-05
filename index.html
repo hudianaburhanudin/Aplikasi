@@ -2,11 +2,19 @@
 <html lang="id">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Buku Bersuara">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>
+// Safari/iOS lama (< 16.4) tidak mengenal sintaks regex yang dipakai aplikasi ini
+try{ new RegExp("(?<=a)b"); }catch(e){ document.addEventListener("DOMContentLoaded", function(){ document.body.innerHTML = '<div style="padding:24px;font:17px/1.5 system-ui"><h2>Peramban terlalu lama</h2><p>Aplikasi ini membutuhkan iOS/iPadOS 16.4 ke atas (atau Chrome/Edge/Safari terbaru). Perbarui sistem Anda lalu buka lagi.</p></div>'; }); window.__oldBrowser = true; }
+</script>
 <title>Buku Bersuara</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
 <meta name="theme-color" content="#1f6f5c">
 <meta name="description" content="Ubah buku (TXT, PDF, EPUB) menjadi suara dan dengarkan kalimat demi kalimat.">
 <style>
@@ -63,7 +71,11 @@ aside h2:first-child{margin-top:0}
 .empty h2{color:var(--ink)}
 .drop{border:2px dashed var(--line);border-radius:12px;padding:28px 16px;margin:18px 0}
 .drop.over{border-color:var(--accent);background:var(--panel)}
-footer{background:var(--panel);border-top:1px solid var(--line);padding:10px 16px}
+footer{background:var(--panel);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
+header{padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+#iosTip{display:none;background:var(--hl);color:var(--ink);padding:10px 16px;font-size:14px;align-items:center;gap:10px}
+#iosTip.show{display:flex}
+#iosTip span{flex:1}
 .progress{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
 .progress input{flex:1;accent-color:var(--accent)}
 .controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin-top:8px}
@@ -89,8 +101,20 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
   aside{position:fixed;inset:57px 0 auto 0;max-height:60vh;z-index:5;border-right:0;border-bottom:1px solid var(--line);display:none;box-shadow:0 8px 24px rgba(0,0,0,.2)}
   aside.open{display:block}
   #menuBtn{display:inline-block}
-  .row{grid-template-columns:100px 1fr 48px}
+  .row{grid-template-columns:90px 1fr 46px;font-size:15px}
+  .row.two{grid-template-columns:1fr;gap:4px}
+  header{flex-wrap:wrap;gap:8px;padding-top:max(10px,env(safe-area-inset-top))}
+  header h1{flex:1 1 calc(100% - 64px);order:-1;font-size:17px;min-width:0}
+  .drop{display:none}
+  header .btn{padding:6px 10px;min-height:36px;font-size:14px;white-space:nowrap}
+  #menuBtn{order:-2}
+  aside{inset:auto 0 auto 0;top:var(--hh,100px)}
+  .controls .btn{padding:8px 10px;font-size:14px}
+  dialog{padding:14px}
+  input[type=file]{max-width:100%}
 }
+html,body{overflow-x:hidden}
+dialog{max-height:90vh;max-height:90dvh;overflow:auto}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -106,6 +130,7 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
   <button class="btn" id="themeBtn" aria-label="Ganti tema">◐</button>
 </header>
 
+<div id="iosTip" role="note"><span>Pasang di iPhone: ketuk tombol <b>Bagikan</b> (kotak berpanah) di Safari, lalu pilih <b>Tambahkan ke Layar Utama</b>.</span><button class="btn" id="iosTipX">Tutup</button></div>
 <main>
   <aside id="side">
     <h2>Bab</h2>
@@ -116,7 +141,7 @@ input[type=text]{width:100%;padding:8px;border:1px solid var(--line);border-radi
   <section id="reader" aria-live="off">
     <div class="empty" id="empty">
       <h2>Ubah buku menjadi suara</h2>
-      <p>Buka file <b>TXT, PDF, atau EPUB</b>, atau tempel teks. Aplikasi membacakannya kalimat demi kalimat, dengan sorotan pada kalimat yang sedang dibaca.</p>
+      <p>Buka file <b>PDF, DOC/DOCX, EPUB, TXT</b> (termasuk teks Arab), atau tempel teks. Aplikasi membacakannya kalimat demi kalimat, dengan sorotan pada kalimat yang sedang dibaca.</p>
       <div class="drop" id="drop">Seret file buku ke sini</div>
       <button class="btn primary" id="openBtn2">Pilih file atau tempel teks</button>
     </div>
@@ -637,7 +662,13 @@ const PRESET = {
   openai: {voice: "alloy", model: "gpt-4o-mini-tts", base: "https://api.openai.com/v1", voices: ["alloy","ash","ballad","coral","echo","fable","nova","onyx","sage","shimmer","verse"]},
   eleven: {voice: "21m00Tcm4TlvDq8ikWAM", model: "eleven_multilingual_v2", base: "https://api.elevenlabs.io/v1", voices: ["21m00Tcm4TlvDq8ikWAM","EXAVITQu4vr4xnSDxMU6","pNInz6obpgDQGcFmaJgB","ErXwobaYiN019PkySvjV"]}
 };
-const cloud = {audio: null, cache: new Map()};
+const cloud = {audio: null, el: null, cache: new Map()};
+const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+function audioEl(){ if(!cloud.el){ cloud.el = new Audio(); cloud.el.preload = "auto"; } return cloud.el; }
+function unlockAudio(){ // iOS hanya mengizinkan audio yang dimulai dari sentuhan pengguna: "buka kunci" satu elemen lalu pakai ulang
+  if(S.cfg.engine === "device") return;
+  try{ const a = audioEl(); a.src = SILENT; const p = a.play(); if(p && p.catch) p.catch(() => {}); }catch(e){}
+}
 function cloudCfg(){ const e = S.cfg.engine, p = PRESET[e]; return {e, key: S.cfg.apiKey.trim(), voice: S.cfg.cVoice || p.voice, model: S.cfg.cModel || p.model, base: (S.cfg.cBase || p.base).replace(/\/+$/, "")}; }
 function cloudBlob(text){
   const c = cloudCfg();
@@ -672,8 +703,8 @@ async function cloudSpeak(my, text, done){
     const url = await cloudFetch(text);
     if(S.book && S.book.mode !== "ar") for(let k = 1; k <= 3; k++){ const n = S.sents[S.si + k]; if(n) cloudFetch(n.t).catch(() => {}); }
     if(my !== S.token) return;
-    const a = cloud.audio = new Audio(url);
-    a.playbackRate = +S.cfg.rate; a.preservesPitch = true; a.volume = +S.cfg.vol;
+    const a = cloud.audio = audioEl(); a.src = url;
+    a.playbackRate = +S.cfg.rate; a.preservesPitch = a.webkitPreservesPitch = true; a.volume = +S.cfg.vol;
     a.onended = () => { if(my === S.token && S.playing) done(); };
     a.onerror = () => { if(my === S.token){ toast("Audio gagal diputar"); setPlaying(false); } };
     await a.play();
@@ -762,7 +793,7 @@ function setPlaying(p){
 function play(){
   if(S.cfg.engine === "device" && !synthOK){ toast("Peramban ini tidak mendukung suara. Gunakan Chrome, Edge, atau Safari."); return; }
   if(!S.book){ openDlg(); return; }
-  setPlaying(true); speakCurrent(); armSleep();
+  unlockAudio(); setPlaying(true); speakCurrent(); armSleep();
 }
 function pause(){ setPlaying(false); }
 function toggle(){ S.playing ? pause() : play(); }
@@ -1046,7 +1077,7 @@ $("prevS").onclick = () => { if(S.book) jump(S.si - 1); };
 $("nextS").onclick = () => { if(S.book) jump(S.si + 1); };
 $("prevCh").onclick = () => S.book && gotoChapter(S.ci - 1, 0, S.playing);
 $("nextCh").onclick = () => S.book && gotoChapter(S.ci + 1, 0, S.playing);
-$("repeat").onclick = () => { if(S.book){ if(!S.playing) setPlaying(true); speakCurrent(); armSleep(); } };
+$("repeat").onclick = () => { if(S.book){ unlockAudio(); if(!S.playing) setPlaying(true); speakCurrent(); armSleep(); } };
 $("seek").oninput = () => { if(S.book) jump(+$("seek").value); };
 $("page").addEventListener("click", e => { const sp = e.target.closest(".sent"); if(sp){ jump(+sp.dataset.i); if(!S.playing) play(); } });
 $("page").addEventListener("keydown", e => { if(e.key === "Enter" && e.target.classList.contains("sent")){ jump(+e.target.dataset.i); play(); } });
@@ -1057,7 +1088,7 @@ document.addEventListener("keydown", e => {
   else if(e.key === "ArrowLeft" && S.book) jump(S.si - 1);
   else if((e.key === "r" || e.key === "R") && S.book) $("repeat").click();
 });
-$("menuBtn").onclick = () => $("side").classList.toggle("open");
+$("menuBtn").onclick = () => { document.documentElement.style.setProperty("--hh", document.querySelector("header").offsetHeight + "px"); $("side").classList.toggle("open"); };
 $("themeBtn").onclick = () => {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const cur = document.documentElement.dataset.theme || (dark ? "dark" : "light");
@@ -1068,6 +1099,12 @@ const th = store.get("theme", null); if(th) document.documentElement.dataset.the
 window.addEventListener("beforeunload", () => { if(synthOK) speechSynthesis.cancel(); });
 
 /* ============ Mulai ============ */
+(function(){
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const standalone = navigator.standalone || matchMedia("(display-mode: standalone)").matches;
+  if(ios && !standalone && !store.get("iosTipX", false)) $("iosTip").classList.add("show");
+  $("iosTipX").onclick = () => { $("iosTip").classList.remove("show"); store.set("iosTipX", true); };
+})();
 if("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
 applyCfg();
 if(!synthOK) toast("Peramban ini tidak mendukung suara (Web Speech API).");
