@@ -21,7 +21,9 @@ Buka `index.html` di Chrome, Edge, atau Safari (tanpa instalasi, tanpa server). 
 3. Atur suara di **Pengaturan suara**.
 
 ## Fitur
-- Format: TXT/MD, PDF (berteks), EPUB, teks tempelan; seret-lepas file.
+- Format: PDF (berteks), **DOC, DOCX, ODT, RTF**, EPUB, HTML, TXT/MD (encoding Arab windows-1256/UTF-16 dikenali otomatis), teks tempelan; seret-lepas file. Jenis file dikenali dari isinya, bukan hanya ekstensi.
+- Teks Arab dibaca langsung dari file **tanpa OCR**: bentuk huruf presentasi PDF dinormalkan, ligatur lam-alif yang terbalik diperbaiki, tatwil dan tanda arah dibuang, dan teks yang tersimpan terbalik dapat dideteksi otomatis atau dibalik manual di dialog Buka buku. PDF hasil scan (gambar) tetap tidak bisa dibaca tanpa OCR.
+- DOCX/ODT: judul (Heading) dipakai sebagai pembagi bab.
 - Pembagian bab otomatis (Bab/Chapter/Bagian/Pasal/Kitab…), atau per ±6000 karakter.
 - Pembacaan per kalimat dengan sorotan, bilah posisi, perkiraan sisa waktu.
 - Kontrol: putar/jeda, kalimat sebelumnya/berikutnya, ulangi kalimat, bab sebelumnya/berikutnya.

@@ -392,8 +392,8 @@ async function readEpub(file){
 
 /* ---- Teks Arab: normalisasi & deteksi urutan terbalik ---- */
 function cleanArabic(t){
-  return t.replace(/[ﭐ-﷿ﹰ-﻿]+/g, m => m.normalize("NFKC"))   // bentuk presentasi → huruf dasar (agar terbaca mesin suara)
-          .replace(/[ـ​-‏‪-‮⁦-⁩﻿]/g, "");   // tatwil, tanda arah, BOM
+  return t.replace(/[\uFB50-\uFDFF\uFE70-\uFEFF]+/g, m => m.normalize("NFKC"))   // bentuk presentasi → huruf dasar (agar terbaca mesin suara)
+          .replace(/[\u0640\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");   // tatwil, tanda arah, BOM, karakter kontrol
 }
 function fixArabic(text){
   text = cleanArabic(text);
